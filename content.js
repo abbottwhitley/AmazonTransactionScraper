@@ -13,8 +13,8 @@
   // Default to current month
   function getDefaultDateFilterSettings() {
     const now = new Date();
-    const startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-    const endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+    const startDate = normalizeDate(new Date(now.getFullYear(), now.getMonth(), 1));
+    const endDate = normalizeDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
     return {
       mode: 'current-month', // 'current-month', 'current-page', 'custom'
       enabled: true,
@@ -24,6 +24,164 @@
   }
   
   let dateFilterSettings = getDefaultDateFilterSettings();
+
+  // ============================================================================
+  // UTILITY FUNCTIONS
+  // ============================================================================
+
+  /**
+   * Normalizes a date to midnight (00:00:00) for consistent date comparisons
+   * @param {Date} date - The date to normalize
+   * @returns {Date} A new Date object with time set to midnight
+   */
+  function normalizeDate(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    return d;
+  }
+
+  /**
+   * Formats a date for HTML date input fields (YYYY-MM-DD)
+   * @param {Date} date - The date to format
+   * @returns {string} Formatted date string or empty string if invalid
+   */
+  function formatDateForInput(date) {
+    if (!date) return '';
+    const d = new Date(date);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  }
+
+  /**
+   * Parses a date string from transaction page (e.g., "November 3, 2025")
+   * @param {string} dateString - The date string to parse
+   * @returns {Object|null} Object with year, month, and date, or null if invalid
+   */
+  function parseDateFromTransaction(dateString) {
+    const date = new Date(dateString);
+    if (!isNaN(date.getTime())) {
+      return {
+        year: date.getFullYear(),
+        month: date.getMonth() + 1, // JavaScript months are 0-indexed
+        date: date
+      };
+    }
+    return null;
+  }
+
+  /**
+   * Checks if a parsed date is within the target date range
+   * @param {Object} parsedDate - Parsed date object with date, year, month properties
+   * @returns {boolean} True if date is in range or filtering is disabled
+   */
+  function isDateInTargetRange(parsedDate) {
+    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate || !dateFilterSettings.endDate) {
+      return true;
+    }
+    const transDateOnly = normalizeDate(parsedDate.date);
+    const startDateOnly = normalizeDate(dateFilterSettings.startDate);
+    const endDateOnly = normalizeDate(dateFilterSettings.endDate);
+    
+    return transDateOnly >= startDateOnly && transDateOnly <= endDateOnly;
+  }
+
+  /**
+   * Checks if a parsed date is before the target start date
+   * @param {Object} parsedDate - Parsed date object
+   * @returns {boolean} True if date is before start date
+   */
+  function hasPassedTargetMonth(parsedDate) {
+    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate) return false;
+    const transDateOnly = normalizeDate(parsedDate.date);
+    const startDateOnly = normalizeDate(dateFilterSettings.startDate);
+    return transDateOnly < startDateOnly;
+  }
+
+  /**
+   * Checks if we should continue collecting (date is <= end date)
+   * @param {Object} parsedDate - Parsed date object
+   * @returns {boolean} True if date is within or before end date
+   */
+  function shouldContinueCollecting(parsedDate) {
+    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.endDate) return true;
+    const transDateOnly = normalizeDate(parsedDate.date);
+    const endDateOnly = normalizeDate(dateFilterSettings.endDate);
+    return transDateOnly <= endDateOnly;
+  }
+
+  /**
+   * Escapes a value for CSV format (handles commas, quotes, newlines)
+   * @param {*} value - The value to escape
+   * @returns {string} Escaped CSV value
+   */
+  function escapeCSV(value) {
+    if (value === null || value === undefined) return '';
+    const stringValue = String(value);
+    if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
+      return `"${stringValue.replace(/"/g, '""')}"`;
+    }
+    return stringValue;
+  }
+
+  /**
+   * Generates a date string in ISO format (YYYY-MM-DD) for filenames
+   * @returns {string} Current date in ISO format
+   */
+  function getDateString() {
+    const now = new Date();
+    return now.toISOString().split('T')[0];
+  }
+
+  /**
+   * Sleep/delay utility function
+   * @param {number} ms - Milliseconds to sleep
+   * @returns {Promise} Promise that resolves after the delay
+   */
+  function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
+
+  /**
+   * Gets the appropriate button text based on current state
+   * @param {Object} options - Button state options
+   * @param {boolean} options.isExporting - Whether export is in progress
+   * @param {Object} options.progress - Progress object with current and total
+   * @param {string} options.customText - Custom text to display
+   * @returns {string} Button text
+   */
+  function getExportButtonText(options = {}) {
+    const { isExporting = false, progress = null, customText = null } = options;
+    
+    if (customText) {
+      return customText;
+    }
+    
+    if (isExporting && progress) {
+      return `🔄 Fetching order ${progress.current}/${progress.total}...`;
+    }
+    
+    if (CONFIG.TEST_MODE) {
+      return `🧪 Export Transactions (TEST MODE - First ${CONFIG.TEST_MODE_MAX_ORDERS} Only)`;
+    }
+    
+    return '📥 Export All Transactions to CSV';
+  }
+
+  /**
+   * Resets the export button to its default state
+   * @param {HTMLElement} button - The button element to reset
+   */
+  function resetExportButton(button) {
+    if (!button) return;
+    button.textContent = getExportButtonText();
+    button.disabled = false;
+  }
+
+  // ============================================================================
+  // END UTILITY FUNCTIONS
+  // ============================================================================
 
   // Wait for page to fully load
   if (document.readyState === 'loading') {
@@ -46,9 +204,7 @@
     const exportButton = document.createElement('button');
     exportButton.id = 'amazon-export-btn';
     exportButton.className = 'amazon-export-button';
-    exportButton.textContent = CONFIG.TEST_MODE 
-      ? `🧪 Export Transactions (TEST MODE - First ${CONFIG.TEST_MODE_MAX_ORDERS} Only)` 
-      : '📥 Export All Transactions to CSV';
+    exportButton.textContent = getExportButtonText();
     exportButton.addEventListener('click', (e) => {
       console.log('Amazon Transaction Exporter: Button clicked');
       e.preventDefault();
@@ -328,58 +484,6 @@
     }
   }
 
-  function formatDateForInput(date) {
-    if (!date) return '';
-    const d = new Date(date);
-    const year = d.getFullYear();
-    const month = String(d.getMonth() + 1).padStart(2, '0');
-    const day = String(d.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  }
-
-  function parseDateFromTransaction(dateString) {
-    // Parse dates like "November 3, 2025", "Nov 3, 2025", etc.
-    const date = new Date(dateString);
-    if (!isNaN(date.getTime())) {
-      return {
-        year: date.getFullYear(),
-        month: date.getMonth() + 1, // JavaScript months are 0-indexed
-        date: date
-      };
-    }
-    return null;
-  }
-
-  function isDateInTargetRange(parsedDate) {
-    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate || !dateFilterSettings.endDate) {
-      return true;
-    }
-    const transactionDate = parsedDate.date;
-    // Normalize dates to compare just the date part (ignore time)
-    const transDateOnly = new Date(transactionDate.getFullYear(), transactionDate.getMonth(), transactionDate.getDate());
-    const startDateOnly = new Date(dateFilterSettings.startDate.getFullYear(), dateFilterSettings.startDate.getMonth(), dateFilterSettings.startDate.getDate());
-    const endDateOnly = new Date(dateFilterSettings.endDate.getFullYear(), dateFilterSettings.endDate.getMonth(), dateFilterSettings.endDate.getDate());
-    
-    return transDateOnly >= startDateOnly && transDateOnly <= endDateOnly;
-  }
-
-  function hasPassedTargetMonth(parsedDate) {
-    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate) return false;
-    // Normalize dates to compare just the date part (ignore time)
-    const transDateOnly = new Date(parsedDate.date.getFullYear(), parsedDate.date.getMonth(), parsedDate.date.getDate());
-    const startDateOnly = new Date(dateFilterSettings.startDate.getFullYear(), dateFilterSettings.startDate.getMonth(), dateFilterSettings.startDate.getDate());
-    // If we're before the start date
-    return transDateOnly < startDateOnly;
-  }
-
-  function shouldContinueCollecting(parsedDate) {
-    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.endDate) return true;
-    // Normalize dates to compare just the date part (ignore time)
-    const transDateOnly = new Date(parsedDate.date.getFullYear(), parsedDate.date.getMonth(), parsedDate.date.getDate());
-    const endDateOnly = new Date(dateFilterSettings.endDate.getFullYear(), dateFilterSettings.endDate.getMonth(), dateFilterSettings.endDate.getDate());
-    // Stop if we've passed the end date
-    return transDateOnly <= endDateOnly;
-  }
 
   function extractTransactionDates() {
     // Extract date headers from the transactions page
@@ -495,165 +599,205 @@
     return false;
   }
 
+  /**
+   * Collects all order links from the current page or multiple pages based on date filter settings
+   * @returns {Promise<Array>} Array of order link objects
+   */
+  async function collectAllOrderLinks() {
+    const allOrderLinks = [];
+    let pageCount = 0;
+    
+    if (dateFilterSettings.enabled && dateFilterSettings.startDate && dateFilterSettings.endDate) {
+      // Collect links from all pages that contain dates in the range
+      const maxPages = 50;
+      let passedEndDate = false;
+
+      while (pageCount < maxPages && !passedEndDate) {
+        const pageOrderLinks = extractOrderLinks();
+        console.log(`Collection Page ${pageCount + 1}: Found ${pageOrderLinks.length} order links`);
+        
+        allOrderLinks.push(...pageOrderLinks);
+        
+        const dates = extractTransactionDates();
+        const hasTargetDate = dates.some(d => isDateInTargetRange(d));
+        const hasPassedEnd = dates.every(d => !shouldContinueCollecting(d));
+        
+        if (hasPassedEnd && !hasTargetDate) {
+          console.log('Passed end date, stopping page collection');
+          passedEndDate = true;
+          break;
+        }
+
+        const clicked = await clickNextPage();
+        if (!clicked) {
+          console.log('No more pages available');
+          break;
+        }
+
+        pageCount++;
+      }
+    } else {
+      // Just collect from current page
+      const pageOrderLinks = extractOrderLinks();
+      allOrderLinks.push(...pageOrderLinks);
+      pageCount = 1;
+    }
+
+    console.log(`Collected ${allOrderLinks.length} total order links from ${pageCount} page(s)`);
+    return allOrderLinks;
+  }
+
+  /**
+   * Filters order links by date range and test mode limits
+   * @param {Array} orderLinks - Array of order link objects
+   * @returns {Array} Filtered array of order links
+   */
+  function filterOrdersByDateRange(orderLinks) {
+    // Check if we have any orders with transaction dates when date filtering is enabled
+    if (dateFilterSettings.enabled) {
+      const ordersWithDates = orderLinks.filter(link => link.transactionDate).length;
+      if (ordersWithDates === 0 && orderLinks.length > 0) {
+        console.warn('WARNING: Date filtering is enabled but no transaction dates were extracted for any orders.');
+        console.warn('This might indicate an issue with date extraction. Proceeding without date filtering to avoid excluding all orders.');
+        dateFilterSettings.enabled = false;
+      }
+    }
+    
+    // Limit orders in test mode
+    let filteredLinks = CONFIG.TEST_MODE 
+      ? orderLinks.slice(0, CONFIG.TEST_MODE_MAX_ORDERS)
+      : orderLinks;
+    
+    if (CONFIG.TEST_MODE) {
+      console.log(`🧪 TEST MODE: Processing only ${filteredLinks.length} of ${orderLinks.length} orders`);
+    }
+
+    // Filter by date range if enabled
+    if (dateFilterSettings.enabled) {
+      console.log(`Filtering ${filteredLinks.length} orders by date range: ${dateFilterSettings.startDate?.toLocaleDateString()} - ${dateFilterSettings.endDate?.toLocaleDateString()}`);
+      
+      filteredLinks = filteredLinks.filter(orderLink => {
+        if (!orderLink.transactionDate) {
+          console.warn(`Order ${orderLink.orderId} has no transaction date extracted. Including order anyway.`);
+          return true;
+        }
+        
+        const transactionDateObj = {
+          date: orderLink.transactionDate,
+          year: orderLink.transactionDate.getFullYear(),
+          month: orderLink.transactionDate.getMonth() + 1
+        };
+        
+        const inRange = isDateInTargetRange(transactionDateObj);
+        if (inRange) {
+          console.log(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is IN date range`);
+          return true;
+        } else {
+          console.log(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is OUT of date range, filtering out`);
+          return false;
+        }
+      });
+      
+      console.log(`Date filtering result: ${filteredLinks.length} of ${orderLinks.length} orders match the date range`);
+    }
+
+    return filteredLinks;
+  }
+
+  /**
+   * Fetches order details for all provided order links
+   * @param {Array} orderLinks - Array of order link objects to fetch
+   * @param {HTMLElement} button - Button element to update with progress
+   * @returns {Promise<Array>} Array of order detail objects
+   */
+  async function fetchAllOrderDetails(orderLinks, button) {
+    const orderDetails = [];
+    const delayMs = CONFIG.TEST_MODE ? CONFIG.TEST_MODE_DELAY_MS : CONFIG.PRODUCTION_DELAY_MS;
+    
+    button.textContent = getExportButtonText({ customText: `🔄 Fetching ${orderLinks.length} orders...` });
+
+    for (let i = 0; i < orderLinks.length; i++) {
+      const orderLink = orderLinks[i];
+      button.textContent = getExportButtonText({ 
+        isExporting: true, 
+        progress: { current: i + 1, total: orderLinks.length } 
+      });
+      
+      try {
+        const details = await fetchOrderDetails(orderLink.url, orderLink.orderId, orderLink.transactionDate);
+        if (details) {
+          orderDetails.push(details);
+          console.log(`Successfully fetched order ${orderLink.orderId}`);
+        }
+      } catch (error) {
+        console.error(`Error fetching order ${orderLink.orderId}:`, error);
+      }
+      
+      if (i < orderLinks.length - 1) {
+        await sleep(delayMs);
+      }
+    }
+
+    return orderDetails;
+  }
+
+  /**
+   * Main export function - orchestrates the entire export process
+   */
   async function exportToCSV() {
+    const button = document.getElementById('amazon-export-btn');
+    if (!button) {
+      console.error('Export button not found');
+      return;
+    }
+
     try {
-      const button = document.getElementById('amazon-export-btn');
-      button.textContent = '🔄 Exporting...';
+      button.textContent = getExportButtonText({ customText: '🔄 Exporting...' });
       button.disabled = true;
 
-      // If date filtering is enabled, navigate to the start date first
+      // Navigate to target date range if needed
       if (dateFilterSettings.enabled && dateFilterSettings.startDate) {
         const startDateStr = dateFilterSettings.startDate.toLocaleDateString();
-        button.textContent = `🔄 Navigating to ${startDateStr}...`;
+        button.textContent = getExportButtonText({ customText: `🔄 Navigating to ${startDateStr}...` });
         const foundTarget = await navigateToDateRange();
         if (!foundTarget) {
           alert(`Could not find transactions for the selected date range. Make sure you navigate to the correct page manually.`);
-          button.textContent = CONFIG.TEST_MODE 
-            ? `🧪 Export Transactions (TEST MODE - First ${CONFIG.TEST_MODE_MAX_ORDERS} Only)` 
-            : '📥 Export All Transactions to CSV';
-          button.disabled = false;
+          resetExportButton(button);
           return;
         }
       }
 
-      // Collect order links from all pages in the target month
-      const allOrderLinks = [];
-      let pageCount = 0;
+      // Collect all order links
+      const allOrderLinks = await collectAllOrderLinks();
       
-      if (dateFilterSettings.enabled && dateFilterSettings.startDate && dateFilterSettings.endDate) {
-        // We're already on a page with the target date range (from navigateToDateRange)
-        // Now collect links from all pages that contain dates in the range
-        const maxPages = 50;
-        let passedEndDate = false;
-
-        while (pageCount < maxPages && !passedEndDate) {
-          // Extract order links from current page
-          const pageOrderLinks = extractOrderLinks();
-          console.log(`Collection Page ${pageCount + 1}: Found ${pageOrderLinks.length} order links`);
-          
-          // Collect all links (we'll filter by date when fetching details)
-          allOrderLinks.push(...pageOrderLinks);
-          
-          // Check dates on current page to see if we should continue
-          const dates = extractTransactionDates();
-          const hasTargetDate = dates.some(d => isDateInTargetRange(d));
-          const hasPassedEnd = dates.every(d => !shouldContinueCollecting(d));
-          
-          if (hasPassedEnd && !hasTargetDate) {
-            console.log('Passed end date, stopping page collection');
-            passedEndDate = true;
-            break;
-          }
-
-          // Click to next page to continue collecting
-          const clicked = await clickNextPage();
-          if (!clicked) {
-            console.log('No more pages available');
-            break;
-          }
-
-          pageCount++;
-        }
-      } else {
-        // Just collect from current page
-        const pageOrderLinks = extractOrderLinks();
-        allOrderLinks.push(...pageOrderLinks);
-        pageCount = 1;
-      }
-
-      console.log(`Collected ${allOrderLinks.length} total order links from ${pageCount} page(s)`);
-      
-      // Log how many orders have transaction dates
+      // Log order statistics
       const ordersWithDates = allOrderLinks.filter(link => link.transactionDate).length;
       const ordersWithoutDates = allOrderLinks.length - ordersWithDates;
       console.log(`Orders with transaction dates: ${ordersWithDates}, Orders without dates: ${ordersWithoutDates}`);
 
       if (allOrderLinks.length === 0) {
         alert('No order links found. Make sure you are on the Amazon Transactions page.');
-        button.textContent = CONFIG.TEST_MODE 
-          ? `🧪 Export Transactions (TEST MODE - First ${CONFIG.TEST_MODE_MAX_ORDERS} Only)` 
-          : '📥 Export All Transactions to CSV';
-        button.disabled = false;
+        resetExportButton(button);
         return;
       }
 
-      // Check if we have any orders with transaction dates when date filtering is enabled
-      if (dateFilterSettings.enabled) {
-        const ordersWithDates = allOrderLinks.filter(link => link.transactionDate).length;
-        if (ordersWithDates === 0 && allOrderLinks.length > 0) {
-          console.warn('WARNING: Date filtering is enabled but no transaction dates were extracted for any orders.');
-          console.warn('This might indicate an issue with date extraction. Proceeding without date filtering to avoid excluding all orders.');
-          // Disable date filtering as a fallback so we don't exclude everything
-          dateFilterSettings.enabled = false;
+      // Filter orders by date range and test mode
+      const ordersToProcess = filterOrdersByDateRange(allOrderLinks);
+
+      if (ordersToProcess.length === 0) {
+        let errorMessage = 'Could not find any orders to process. ';
+        if (dateFilterSettings.enabled) {
+          errorMessage += `No orders found in the selected date range (${dateFilterSettings.startDate?.toLocaleDateString()} - ${dateFilterSettings.endDate?.toLocaleDateString()}). Please check the date range or try exporting the current page only.`;
+        } else {
+          errorMessage += 'Please try again.';
         }
-      }
-      
-      // Limit orders in test mode
-      const orderLinks = CONFIG.TEST_MODE 
-        ? allOrderLinks.slice(0, CONFIG.TEST_MODE_MAX_ORDERS)
-        : allOrderLinks;
-      
-      const delayMs = CONFIG.TEST_MODE ? CONFIG.TEST_MODE_DELAY_MS : CONFIG.PRODUCTION_DELAY_MS;
-      
-      if (CONFIG.TEST_MODE) {
-        console.log(`🧪 TEST MODE: Processing only ${orderLinks.length} of ${allOrderLinks.length} orders`);
+        alert(errorMessage);
+        resetExportButton(button);
+        return;
       }
 
-      // Filter orders by date range BEFORE processing (more efficient and correct)
-      let ordersToProcess = orderLinks;
-      if (dateFilterSettings.enabled) {
-        console.log(`Filtering ${orderLinks.length} orders by date range: ${dateFilterSettings.startDate?.toLocaleDateString()} - ${dateFilterSettings.endDate?.toLocaleDateString()}`);
-        
-        ordersToProcess = orderLinks.filter(orderLink => {
-          if (!orderLink.transactionDate) {
-            console.warn(`Order ${orderLink.orderId} has no transaction date extracted. Including order anyway.`);
-            return true; // Include orders without dates to avoid filtering everything out
-          }
-          
-          const transactionDateObj = {
-            date: orderLink.transactionDate,
-            year: orderLink.transactionDate.getFullYear(),
-            month: orderLink.transactionDate.getMonth() + 1
-          };
-          
-          const inRange = isDateInTargetRange(transactionDateObj);
-          if (inRange) {
-            console.log(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is IN date range`);
-            return true;
-          } else {
-            console.log(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is OUT of date range, filtering out`);
-            return false;
-          }
-        });
-        
-        console.log(`Date filtering result: ${ordersToProcess.length} of ${orderLinks.length} orders match the date range`);
-      }
-
-      // Update button to show progress
-      button.textContent = `🔄 Fetching ${ordersToProcess.length} orders...`;
-
-      // Fetch order details for each filtered order
-      const orderDetails = [];
-      for (let i = 0; i < ordersToProcess.length; i++) {
-        const orderLink = ordersToProcess[i];
-        button.textContent = `🔄 Fetching order ${i + 1}/${ordersToProcess.length}...`;
-        
-        try {
-          const details = await fetchOrderDetails(orderLink.url, orderLink.orderId, orderLink.transactionDate);
-          if (details) {
-            orderDetails.push(details);
-            console.log(`Successfully fetched order ${orderLink.orderId}`);
-          }
-        } catch (error) {
-          console.error(`Error fetching order ${orderLink.orderId}:`, error);
-          // Continue with other orders even if one fails
-        }
-        
-        // Add a delay between requests to avoid rate limiting
-        if (i < ordersToProcess.length - 1) {
-          await sleep(delayMs);
-        }
-      }
+      // Fetch order details
+      const orderDetails = await fetchAllOrderDetails(ordersToProcess, button);
 
       if (orderDetails.length === 0) {
         let errorMessage = 'Could not fetch any order details. ';
@@ -663,38 +807,27 @@
           errorMessage += 'Please try again.';
         }
         alert(errorMessage);
-        button.textContent = CONFIG.TEST_MODE 
-          ? `🧪 Export Transactions (TEST MODE - First ${CONFIG.TEST_MODE_MAX_ORDERS} Only)` 
-          : '📥 Export All Transactions to CSV';
-        button.disabled = false;
+        resetExportButton(button);
         return;
       }
 
-      // Convert to CSV
+      // Convert to CSV and download
       const csvContent = convertToCSV(orderDetails);
-
-      // Download CSV
       const filename = CONFIG.TEST_MODE 
         ? `amazon_orders_TEST_${getDateString()}.csv`
         : `amazon_orders_${getDateString()}.csv`;
       downloadCSV(csvContent, filename);
 
-      button.textContent = `✅ Exported ${orderDetails.length} orders!`;
+      // Show success message
+      button.textContent = getExportButtonText({ customText: `✅ Exported ${orderDetails.length} orders!` });
       setTimeout(() => {
-        button.textContent = CONFIG.TEST_MODE 
-          ? `🧪 Export Transactions (TEST MODE - First ${CONFIG.TEST_MODE_MAX_ORDERS} Only)` 
-          : '📥 Export All Transactions to CSV';
-        button.disabled = false;
+        resetExportButton(button);
       }, 3000);
 
     } catch (error) {
       console.error('Export error:', error);
       alert('Error exporting transactions: ' + error.message);
-      const button = document.getElementById('amazon-export-btn');
-      button.textContent = CONFIG.TEST_MODE 
-        ? `🧪 Export Transactions (TEST MODE - First ${CONFIG.TEST_MODE_MAX_ORDERS} Only)` 
-        : '📥 Export All Transactions to CSV';
-      button.disabled = false;
+      resetExportButton(button);
     }
   }
 
@@ -1523,15 +1656,11 @@
     }
   }
 
-  function escapeCSV(value) {
-    if (value === null || value === undefined) return '';
-    const stringValue = String(value);
-    if (stringValue.includes(',') || stringValue.includes('"') || stringValue.includes('\n')) {
-      return `"${stringValue.replace(/"/g, '""')}"`;
-    }
-    return stringValue;
-  }
-
+  /**
+   * Downloads a CSV file
+   * @param {string} content - CSV content
+   * @param {string} filename - Filename for download
+   */
   function downloadCSV(content, filename) {
     const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -1545,14 +1674,6 @@
     URL.revokeObjectURL(url);
   }
 
-  function getDateString() {
-    const now = new Date();
-    return now.toISOString().split('T')[0];
-  }
-
-  function sleep(ms) {
-    return new Promise(resolve => setTimeout(resolve, ms));
-  }
 
   // Re-initialize when page content changes (for SPAs)
   const observer = new MutationObserver((mutations) => {
