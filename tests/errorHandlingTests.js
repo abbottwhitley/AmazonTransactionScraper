@@ -50,16 +50,33 @@
       tf.test('CircuitBreaker opens after threshold failures', async () => {
         const breaker = new CircuitBreaker({ threshold: 2, timeoutMs: 1000 });
         
-        // Cause failures
-        try {
-          await breaker.execute(() => { throw new Error('Fail'); });
-        } catch (e) {}
+        // Temporarily suppress error logging for this test
+        const originalError = console.error;
+        const errorMessages = [];
+        console.error = (...args) => {
+          // Capture but don't display circuit breaker errors during test
+          if (args[0] && typeof args[0] === 'string' && args[0].includes('Circuit breaker')) {
+            errorMessages.push(args[0]);
+            return;
+          }
+          originalError.apply(console, args);
+        };
         
         try {
-          await breaker.execute(() => { throw new Error('Fail'); });
-        } catch (e) {}
-        
-        tf.assertEquals(breaker.getState(), 'OPEN', 'Circuit should be open');
+          // Cause failures
+          try {
+            await breaker.execute(() => { throw new Error('Fail'); });
+          } catch (e) {}
+          
+          try {
+            await breaker.execute(() => { throw new Error('Fail'); });
+          } catch (e) {}
+          
+          tf.assertEquals(breaker.getState(), 'OPEN', 'Circuit should be open');
+        } finally {
+          // Restore original console.error
+          console.error = originalError;
+        }
       });
     }
 

@@ -175,25 +175,60 @@ AmazonTransactionScraper/
 
 ### Testing
 
-The extension includes a test framework for validating functionality:
+The extension includes a test framework for validating functionality. Tests run in the browser console on any Amazon page where the extension is active.
 
-1. **Run tests from browser console:**
-   ```javascript
-   // Run all tests
-   runAllTests();
-   
-   // Run specific test suite
-   runDateFilterTests();
-   runErrorHandlingTests();
-   runUtilityTests();
-   ```
+#### Running Tests
 
-2. **Auto-run tests:** Add `?runTests=true` to the URL when in test mode
+**Method 1: Browser Console (Recommended)**
 
-3. **Test framework features:**
-   - Simple assertion methods (`assert`, `assertEquals`, `assertTrue`, `assertFalse`)
-   - Async test support
-   - Detailed test results and summaries
+1. Navigate to any Amazon page where the extension is active (e.g., `https://www.amazon.com/cpe/yourpayments/transactions`)
+2. Open Chrome DevTools (F12 or Right-click → Inspect)
+3. Go to the **Console** tab
+4. Run one of the following commands:
+
+```javascript
+// Run all test suites
+await runAllTests();
+
+// Run specific test suites
+await runDateFilterTests();
+await runErrorHandlingTests();
+await runUtilityTests();
+```
+
+**Method 2: Auto-run on Page Load**
+
+1. Add `?runTests=true` to the URL (e.g., `https://www.amazon.com/cpe/yourpayments/transactions?runTests=true`)
+2. Tests will automatically run when the page loads (only if `TEST_MODE` is enabled in `core/config.js`)
+
+#### Test Framework Features
+
+- **Simple assertion methods:**
+  - `assert(condition, message)` - Assert a condition is true
+  - `assertEquals(actual, expected, message)` - Assert two values are equal
+  - `assertTrue(value, message)` - Assert a value is truthy
+  - `assertFalse(value, message)` - Assert a value is falsy
+- **Async test support** - Tests can be async functions
+- **Detailed results** - Test results show passed/failed counts and error messages
+- **Grouped output** - Tests are grouped by suite in the console
+
+#### Available Test Suites
+
+- **Date Filter Tests** (`runDateFilterTests()`) - Tests date normalization and filtering logic
+- **Error Handling Tests** (`runErrorHandlingTests()`) - Tests Result pattern, retry logic, and circuit breaker
+  - **Note:** The circuit breaker test intentionally triggers failures, so you may see error messages in the console. This is expected behavior.
+- **Utility Tests** (`runUtilityTests()`) - Placeholder for utility function tests
+
+#### Troubleshooting Test Errors
+
+**"Could not establish connection" errors:**
+- These errors are typically from other Chrome extensions, not this extension
+- To identify the source, check the stack trace in the error message
+- You can disable other extensions temporarily to isolate the issue
+
+**Circuit breaker errors during tests:**
+- The error handling tests intentionally trigger failures to verify the circuit breaker pattern works correctly
+- Seeing `[ERROR] Circuit breaker OPENED after 2 failures` is expected and indicates the test is working
 
 ## Troubleshooting
 
