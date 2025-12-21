@@ -5,7 +5,8 @@
   "description": "Export Amazon transaction history to CSV",
   "permissions": [
     "activeTab",
-    "downloads"
+    "downloads",
+    "storage"
   ],
   "host_permissions": [
     "https://*.amazon.com/*"
@@ -18,7 +19,29 @@
         "https://*.amazon.com/your-orders*",
         "https://*.amazon.com/cpe/yourpayments/transactions*"
       ],
-      "js": ["logger.js", "constants.js", "dateFilter.js", "content.js"],
+      "js": [
+        "core/logger.js",
+        "core/constants.js",
+        "core/config.js",
+        "core/state.js",
+        "filters/dateFilter.js",
+        "filters/dateUtils.js",
+        "core/errorHandling.js",
+        "data/orderModel.js",
+        "data/csvExporter.js",
+        "ui/button.js",
+        "ui/modal.js",
+        "ui/progress.js",
+        "scrapers/pagination.js",
+        "scrapers/transactionPage.js",
+        "scrapers/orderDetailPage.js",
+        "tests/testFramework.js",
+        "tests/dateFilterTests.js",
+        "tests/utilityTests.js",
+        "tests/errorHandlingTests.js",
+        "tests/runAllTests.js",
+        "content.js"
+      ],
       "css": ["styles.css"],
       "run_at": "document_end"
     }

@@ -95,7 +95,7 @@ const CONFIG = {
 - ✅ **Smart Date Filtering**: Filter by transaction date with flexible date range options
 - ✅ **Automatic Pagination**: Automatically navigates through multiple pages to collect all orders
 - ✅ **Net Total Calculation**: Calculates order totals after refunds
-- ✅ **Robust Error Handling**: Continues processing even if individual orders fail
+- ✅ **Robust Error Handling**: Advanced error handling with retry logic, circuit breaker pattern, and structured error results
 - ✅ **Progress Indicators**: Shows progress during export (current order X of Y)
 - ✅ **Clean CSV Export**: Properly formatted CSV with escaping for special characters
 - ✅ **Test Mode**: Built-in testing mode for development and debugging
@@ -114,17 +114,44 @@ It also loads on (but may not fully function):
 
 - `activeTab`: To access the current Amazon page
 - `downloads`: To download the CSV file
+- `storage`: To persist user preferences (date filter settings)
 - `host_permissions`: To access Amazon.com domains for fetching order detail pages
 
 ## File Structure
 
 ```
 AmazonTransactionScraper/
-├── manifest.json         # Extension manifest file
-├── content.js            # Main script (scraping, data extraction, export logic)
-├── styles.css            # Button and modal styling
-├── README.md             # This file
-└── IMPROVEMENTS.md       # Architecture and refactoring recommendations
+├── manifest.json              # Extension manifest file (required at root)
+├── content.js                 # Main orchestrator (initialization and coordination)
+├── styles.css                 # Button and modal styling
+├── README.md                  # This file
+├── IMPROVEMENTS.md            # Architecture and refactoring recommendations
+├── core/                      # Core infrastructure modules
+│   ├── logger.js              # Structured logging utility
+│   ├── constants.js           # Centralized selectors, patterns, and constants
+│   ├── config.js             # Configuration and constants (combines CONFIG + constants)
+│   ├── state.js               # State management (AppState with event system and Chrome storage)
+│   └── errorHandling.js       # Error handling utilities (Result pattern, retry, circuit breaker)
+├── ui/                        # UI modules
+│   ├── button.js              # Button creation & event handling
+│   ├── modal.js               # Export modal UI & interactions
+│   └── progress.js            # Progress indicators & status updates
+├── scrapers/                  # Scraper modules (Strategy pattern)
+│   ├── transactionPage.js     # Extract order links from transactions page
+│   ├── orderDetailPage.js     # Fetch & parse individual order pages (Repository pattern)
+│   └── pagination.js          # Handle pagination & navigation
+├── filters/                   # Filter modules
+│   ├── dateFilter.js          # Date range filtering logic
+│   └── dateUtils.js           # Date parsing, normalization, comparison utilities
+├── data/                      # Data modules
+│   ├── csvExporter.js         # CSV conversion & download
+│   └── orderModel.js          # Order data structure definitions
+└── tests/                     # Test framework and test suites
+    ├── testFramework.js       # Simple test framework
+    ├── dateFilterTests.js     # Date filter unit tests
+    ├── utilityTests.js        # Utility function tests
+    ├── errorHandlingTests.js  # Error handling tests
+    └── runAllTests.js         # Test runner
 ```
 
 ## Development
@@ -145,6 +172,28 @@ AmazonTransactionScraper/
   - Order detail fetching progress
   - Any errors encountered
 - Use Test Mode to limit processing during development
+
+### Testing
+
+The extension includes a test framework for validating functionality:
+
+1. **Run tests from browser console:**
+   ```javascript
+   // Run all tests
+   runAllTests();
+   
+   // Run specific test suite
+   runDateFilterTests();
+   runErrorHandlingTests();
+   runUtilityTests();
+   ```
+
+2. **Auto-run tests:** Add `?runTests=true` to the URL when in test mode
+
+3. **Test framework features:**
+   - Simple assertion methods (`assert`, `assertEquals`, `assertTrue`, `assertFalse`)
+   - Async test support
+   - Detailed test results and summaries
 
 ## Troubleshooting
 
@@ -183,12 +232,32 @@ AmazonTransactionScraper/
 - **Browser Compatibility**: Designed for Chrome/Chromium browsers. Other browsers not tested.
 - **Single Account**: Only exports data from the currently logged-in Amazon account.
 
+## Architecture
+
+The extension follows a modular architecture with separation of concerns and design patterns:
+
+### Design Patterns Implemented
+
+- **Strategy Pattern**: Pluggable scrapers for different page types (`TransactionPageScraper`, `OrderHistoryPageScraper`)
+- **Repository Pattern**: Abstracted data access layer (`OrderRepository`) for fetching order details
+- **State Management**: Centralized state with event system (`AppState`) and Chrome storage persistence
+- **Pipeline Pattern**: Export process broken into discrete, chainable operations
+- **Error Handling**: Result pattern, exponential backoff retry logic, and circuit breaker for resilience
+
+### Module Organization
+
+- **UI Modules**: Button, modal, and progress indicator handling
+- **Scraper Modules**: Page-specific scraping logic with Strategy pattern
+- **Filter Modules**: Date filtering and utility functions
+- **Data Modules**: CSV export and order data models
+- **Core Modules**: Logging, configuration, state management, error handling
+- **Testing**: Built-in test framework for validation
+
 ## Future Improvements
 
 See `IMPROVEMENTS.md` for detailed architectural recommendations and potential enhancements including:
-- Modular code structure
+- Further modularization (UI, scrapers, data modules)
 - Parallel request processing
 - Caching and performance optimizations
 - TypeScript migration
-- Enhanced error handling and retry logic
 

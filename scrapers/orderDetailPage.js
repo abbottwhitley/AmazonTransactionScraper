@@ -1,0 +1,448 @@
+(function() {
+  'use strict';
+
+  /**
+   * Order Repository - Abstracts data access (Repository pattern)
+   */
+  class OrderRepository {
+    constructor() {
+      this.config = window.CONFIG || {};
+      this.logger = window.AmazonExporterLogger;
+      this.result = window.AmazonExporterResult;
+      this.retryHandler = window.AmazonExporterRetryHandler;
+      this.circuitBreaker = window.AmazonExporterCircuitBreaker;
+      this.orderParser = new OrderDetailPageParser();
+      
+      // Create circuit breaker for order fetching
+      this.fetchCircuitBreaker = this.circuitBreaker ? new this.circuitBreaker({
+        threshold: this.config.CIRCUIT_BREAKER_THRESHOLD || 5,
+        timeoutMs: this.config.CIRCUIT_BREAKER_TIMEOUT_MS || 60000
+      }) : null;
+    }
+
+    /**
+     * Fetches order details for a single order
+     * @param {string} orderUrl - Order detail page URL
+     * @param {string} orderId - Order ID
+     * @param {Date} transactionDate - Transaction date
+     * @returns {Promise<Object|null>} Order details object or null if failed
+     */
+    async fetchOrderDetails(orderUrl, orderId, transactionDate) {
+      if (this.logger) {
+        this.logger.debug(`Fetching order details for ${orderId} from ${orderUrl}`);
+      }
+      
+      // Wrap fetch in retry logic and circuit breaker
+      const fetchWithRetry = async () => {
+        const response = await fetch(orderUrl, {
+          method: 'GET',
+          credentials: 'include',
+          headers: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        return await response.text();
+      };
+
+      try {
+        let html;
+        
+        // Use circuit breaker if available
+        if (this.fetchCircuitBreaker) {
+          html = await this.fetchCircuitBreaker.execute(fetchWithRetry);
+        } else if (this.retryHandler) {
+          // Use retry handler if available
+          html = await this.retryHandler.executeWithRetry(fetchWithRetry, {
+            maxRetries: this.config.RETRY_MAX_ATTEMPTS || 3,
+            baseDelayMs: this.config.RETRY_BASE_DELAY_MS || 1000,
+            shouldRetry: (error) => {
+              // Retry on network errors or 5xx errors, but not 4xx errors
+              return !error.message.includes('status: 4');
+            }
+          });
+        } else {
+          // Fallback to direct fetch
+          html = await fetchWithRetry();
+        }
+        
+        // Parse the order details from the HTML using Result pattern
+        const parseResult = this.result ? 
+          this.result.wrap(this.orderParser.parse.bind(this.orderParser), html, orderId, orderUrl, transactionDate) :
+          { success: true, data: this.orderParser.parse(html, orderId, orderUrl, transactionDate) };
+        
+        if (parseResult.success) {
+          return parseResult.data;
+        } else {
+          if (this.logger) {
+            this.logger.error(`Error parsing order ${orderId}:`, parseResult.error);
+          }
+          return null;
+        }
+      } catch (error) {
+        if (this.logger) {
+          this.logger.error(`Error fetching order ${orderId}:`, error);
+        }
+        return null;
+      }
+    }
+
+    /**
+     * Fetches multiple orders
+     * @param {Array} orderLinks - Array of order link objects
+     * @param {Function} onProgress - Progress callback(current, total)
+     * @returns {Promise<Array>} Array of order detail objects
+     */
+    async fetchMultipleOrders(orderLinks, onProgress = null) {
+      const orderDetails = [];
+      const delayMs = this.config.TEST_MODE ? 
+        (this.config.TEST_MODE_DELAY_MS || 1000) : 
+        (this.config.PRODUCTION_DELAY_MS || 1000);
+      
+      for (let i = 0; i < orderLinks.length; i++) {
+        const orderLink = orderLinks[i];
+        
+        if (onProgress) {
+          onProgress(i + 1, orderLinks.length);
+        }
+        
+        const details = await this.fetchOrderDetails(
+          orderLink.url, 
+          orderLink.orderId, 
+          orderLink.transactionDate
+        );
+        
+        if (details) {
+          orderDetails.push(details);
+          if (this.logger) {
+            this.logger.debug(`Successfully fetched order ${orderLink.orderId}`);
+          }
+        }
+        
+        if (i < orderLinks.length - 1) {
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
+
+      return orderDetails;
+    }
+  }
+
+  /**
+   * Order Detail Page Parser - Parses HTML from order detail pages
+   */
+  class OrderDetailPageParser {
+    constructor() {
+      this.config = window.CONFIG || {};
+    }
+
+    /**
+     * Parses order details from HTML
+     * @param {string} html - HTML content of order detail page
+     * @param {string} orderId - Order ID
+     * @param {string} orderUrl - Order URL
+     * @param {Date} transactionDate - Transaction date
+     * @returns {Object} Order details object
+     */
+    parse(html, orderId, orderUrl, transactionDate) {
+      const CONST = this.config;
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+      
+      const orderDetails = {
+        orderNumber: orderId,
+        orderUrl: orderUrl || '',
+        transactionDate: transactionDate ? transactionDate.toLocaleDateString() : '',
+        orderPlacedDate: '',
+        orderTotal: '',
+        refundAmount: '',
+        paymentMethod: '',
+        items: [],
+        status: ''
+      };
+
+      const bodyText = doc.body.textContent || '';
+
+      // Extract order placed date
+      const datePatterns = CONST.DATE_EXTRACTION_PATTERNS || [
+        /(?:Ordered on|Placed on|Order date)[:\s]+([^\n<]+)/i,
+        /Order\s+placed\s+(\w+ \d{1,2}, \d{4})/i,
+        /(\w+ \d{1,2}, \d{4})/,
+        /(\d{1,2}\/\d{1,2}\/\d{4})/
+      ];
+      
+      for (const pattern of datePatterns) {
+        const match = bodyText.match(pattern);
+        if (match) {
+          orderDetails.orderPlacedDate = match[1].trim();
+          break;
+        }
+      }
+
+      // Extract refund total
+      const refundTotalPatterns = CONST.REFUND_PATTERNS || [
+        /Refund\s+Total[:\s]*\$?([\d,]+\.?\d*)/i
+      ];
+      
+      let refundTotal = 0;
+      for (const pattern of refundTotalPatterns) {
+        const matches = bodyText.matchAll(new RegExp(pattern.source, 'gi'));
+        for (const match of matches) {
+          const refundValue = parseFloat(match[1].replace(/,/g, ''));
+          if (!isNaN(refundValue) && refundValue > 0) {
+            refundTotal = refundValue;
+            orderDetails.refundAmount = '$' + refundValue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+            break;
+          }
+        }
+        if (refundTotal > 0) break;
+      }
+      
+      if (refundTotal === 0) {
+        orderDetails.refundAmount = '';
+      }
+
+      // Extract order total (Grand Total)
+      const grandTotalPatterns = CONST.GRAND_TOTAL_PATTERNS || [
+        /Grand\s+Total[:\s]*\$?([\d,]+\.?\d*)/i,
+        /Order\s+Total[:\s]*\$?([\d,]+\.?\d*)/i,
+        /(?:Total\s+for\s+this\s+Order|Total\s+charged)[:\s]*\$?([\d,]+\.?\d*)/i
+      ];
+      
+      let foundGrandTotal = false;
+      let grandTotalValue = 0;
+      for (const pattern of grandTotalPatterns) {
+        const matches = bodyText.matchAll(new RegExp(pattern.source, 'gi'));
+        for (const match of matches) {
+          const contextSize = CONST.CONTEXT_WINDOW_SIZE || 50;
+          const contextStart = Math.max(0, match.index - contextSize);
+          const contextEnd = Math.min(bodyText.length, match.index + match[0].length + contextSize);
+          const context = bodyText.substring(contextStart, contextEnd);
+          
+          if (!context.match(/Item\(s\)\s+Subtotal|Subtotal[:\s]*\$|Before\s+tax/i)) {
+            grandTotalValue = parseFloat(match[1].replace(/,/g, ''));
+            if (!isNaN(grandTotalValue)) {
+              foundGrandTotal = true;
+              break;
+            }
+          }
+        }
+        if (foundGrandTotal) break;
+      }
+      
+      if (!foundGrandTotal) {
+        const pricePattern = CONST.PRICE_PATTERN || /\$([\d,]+\.?\d*)/g;
+        const allAmounts = bodyText.matchAll(pricePattern);
+        const amounts = [];
+        for (const match of allAmounts) {
+          const amount = parseFloat(match[1].replace(/,/g, ''));
+          if (!isNaN(amount) && amount > 0) {
+            amounts.push({ value: amount });
+          }
+        }
+        if (amounts.length > 0) {
+          amounts.sort((a, b) => b.value - a.value);
+          grandTotalValue = amounts[0].value;
+          foundGrandTotal = true;
+        }
+      }
+
+      // Calculate net amount
+      if (foundGrandTotal && grandTotalValue > 0) {
+        const netAmount = grandTotalValue - refundTotal;
+        orderDetails.orderTotal = '$' + netAmount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      }
+
+      // Extract items
+      const excludedKeywords = CONST.EXCLUDED_KEYWORDS || [
+        'Item(s) Subtotal', 'Subtotal', 'Shipping & Handling', 'Shipping', 
+        'Free Shipping', 'Total before tax', 'Estimated tax', 'Grand Total',
+        'Order Total', 'Your Coupon Savings', 'Subscribe & Save', 
+        'Refund Total', 'CO Retail Delivery Fees', 'FSA or HSA eligible',
+        'P&G', 'Delivery Fees', 'Tax', 'Total'
+      ];
+
+      const itemSelectors = CONST.ORDER_DETAIL_PAGE?.items || [
+        '[data-item]',
+        '.yohtmlc-item',
+        '[class*="yo-item"]',
+        '[class*="item-row"]',
+        '[class*="order-item"]',
+        '.a-fixed-left-grid[class*="item"]',
+        'div[class*="item-details"]'
+      ];
+
+      const itemContainers = new Set();
+      
+      for (const selector of itemSelectors) {
+        const containers = Array.from(doc.querySelectorAll(selector));
+        if (containers.length > 0) {
+          containers.forEach(container => {
+            const productLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks || 
+              ['a[href*="/dp/"]', 'a[href*="/gp/product/"]'];
+            const productLinks = container.querySelectorAll(productLinkSelectors.join(', '));
+            productLinks.forEach(link => {
+              const linkText = link.textContent?.trim();
+              const minLength = CONST.MIN_TEXT_LENGTH || 5;
+              const maxLength = CONST.MAX_TEXT_LENGTH || 200;
+              if (linkText && linkText.length > minLength && linkText.length < maxLength) {
+                const isExcluded = excludedKeywords.some(keyword => 
+                  linkText.toLowerCase().includes(keyword.toLowerCase())
+                );
+                if (!isExcluded) {
+                  itemContainers.add(linkText);
+                }
+              }
+            });
+
+            const containerText = container.textContent?.trim() || '';
+            const minTextLengthStrict = CONST.MIN_TEXT_LENGTH_STRICT || 10;
+            if (containerText.length > minTextLengthStrict) {
+              const minLength = CONST.MIN_TEXT_LENGTH || 5;
+              const lines = containerText.split('\n').map(l => l.trim()).filter(l => l.length > minLength);
+              lines.forEach(line => {
+                const isExcluded = excludedKeywords.some(keyword => 
+                  line.toLowerCase().includes(keyword.toLowerCase())
+                );
+                const pricePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
+                const quantityPattern = CONST.QUANTITY_PATTERN || /^Qty:?\s*\d+/;
+                const looksLikePrice = pricePattern.test(line) || quantityPattern.test(line);
+                const metadataPattern = CONST.METADATA_PATTERN || /^(Condition|Sold by|Shipped by|Qty|Quantity):/i;
+                const looksLikeMetadata = metadataPattern.test(line);
+                
+                const maxLength = CONST.MAX_TEXT_LENGTH || 200;
+                if (!isExcluded && !looksLikePrice && !looksLikeMetadata && 
+                    line.length > minTextLengthStrict && line.length < maxLength) {
+                  const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
+                  if (textPattern.test(line)) {
+                    itemContainers.add(line.substring(0, maxLength));
+                  }
+                }
+              });
+            }
+          });
+          if (itemContainers.size > 0) break;
+        }
+      }
+
+      if (itemContainers.size === 0) {
+        const allProductLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks || 
+          ['a[href*="/dp/"]', 'a[href*="/gp/product/"]', 'a[href*="/gp/item-detail/"]'];
+        const allProductLinks = doc.querySelectorAll(allProductLinkSelectors.join(', '));
+        const minTextLengthStrict = CONST.MIN_TEXT_LENGTH_STRICT || 10;
+        const maxLength = CONST.MAX_TEXT_LENGTH || 200;
+        const parentSearchDepth = CONST.PARENT_SEARCH_DEPTH || 5;
+        allProductLinks.forEach(link => {
+          const linkText = link.textContent?.trim();
+          if (linkText && linkText.length > minTextLengthStrict && linkText.length < maxLength) {
+            const isExcluded = excludedKeywords.some(keyword => 
+              linkText.toLowerCase().includes(keyword.toLowerCase())
+            );
+            let parent = link.parentElement;
+            let inSummary = false;
+            const summaryPatterns = CONST.SUMMARY_SECTION_PATTERNS || 
+              [/Order\s+Summary/i, /Payment\s+Information/i, /Order\s+Total/i];
+            for (let i = 0; i < parentSearchDepth && parent; i++) {
+              const parentText = parent.textContent || '';
+              if (summaryPatterns.some(pattern => pattern.test(parentText))) {
+                inSummary = true;
+                break;
+              }
+              parent = parent.parentElement;
+            }
+            
+            const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
+            if (!isExcluded && !inSummary && textPattern.test(linkText)) {
+              itemContainers.add(linkText.substring(0, maxLength));
+            }
+          }
+        });
+      }
+
+      orderDetails.items = Array.from(itemContainers);
+
+      // Extract payment method
+      const paymentPatterns = CONST.PAYMENT_PATTERNS || [
+        /(?:Payment method|Paid with|Payment)[:\s]+([^\n<]+)/i,
+        /(?:Card ending|Card)[:\s]+([^\d\n<]+[\d]+)/i
+      ];
+      
+      for (const pattern of paymentPatterns) {
+        const match = bodyText.match(pattern);
+        if (match) {
+          orderDetails.paymentMethod = match[1].trim();
+          break;
+        }
+      }
+
+      // Extract order status
+      const statusKeywords = CONST.STATUS_KEYWORDS || 
+        ['Shipped', 'Delivered', 'Cancelled', 'Pending', 'Processing', 'Returned', 'Refunded'];
+      let foundStatus = '';
+      
+      const statusSelectors = CONST.ORDER_DETAIL_PAGE?.status || [
+        '[class*="status"]',
+        '[data-testid*="status"]',
+        '[id*="status"]'
+      ];
+      
+      for (const selector of statusSelectors) {
+        const statusElements = doc.querySelectorAll(selector);
+        for (const element of statusElements) {
+          const text = element.textContent?.trim() || '';
+          const maxStatusTextLength = CONST.MAX_STATUS_TEXT_LENGTH || 100;
+          for (const keyword of statusKeywords) {
+            if (text.includes(keyword) && text.length < maxStatusTextLength) {
+              foundStatus = keyword;
+              break;
+            }
+          }
+          if (foundStatus) break;
+        }
+        if (foundStatus) break;
+      }
+      
+      if (!foundStatus) {
+        const statusPatterns = CONST.STATUS_PATTERNS || [
+          /Order\s+Status[:\s]+(Shipped|Delivered|Cancelled|Pending|Processing|Returned|Refunded)/i,
+          /Status[:\s]+(Shipped|Delivered|Cancelled|Pending|Processing|Returned|Refunded)/i,
+          /(?:Your\s+order\s+has\s+been\s+)?(Shipped|Delivered|Cancelled|Pending|Processing|Returned|Refunded)/i
+        ];
+        
+        const contextCheckSize = CONST.CONTEXT_CHECK_SIZE || 20;
+        const codeContextPattern = CONST.CODE_CONTEXT_PATTERN || /[<>=&|!]+|function|var|const|let|if\s*\(/;
+        for (const pattern of statusPatterns) {
+          const match = bodyText.match(pattern);
+          if (match && match[1]) {
+            const matchIndex = bodyText.indexOf(match[0]);
+            const contextStart = Math.max(0, matchIndex - contextCheckSize);
+            const contextEnd = Math.min(bodyText.length, matchIndex + match[0].length + contextCheckSize);
+            const context = bodyText.substring(contextStart, contextEnd);
+            
+            if (!codeContextPattern.test(context)) {
+              foundStatus = match[1];
+              break;
+            }
+          }
+        }
+      }
+      
+      orderDetails.status = foundStatus || '';
+      orderDetails.items = orderDetails.items.join('; ');
+
+      return orderDetails;
+    }
+  }
+
+  // Expose globally
+  window.AmazonExporterOrderRepository = OrderRepository;
+  window.AmazonExporterOrderDetailPageParser = OrderDetailPageParser;
+  
+  // Also expose parser instance for direct use
+  window.AmazonExporterOrderParser = new OrderDetailPageParser();
+
+})();
