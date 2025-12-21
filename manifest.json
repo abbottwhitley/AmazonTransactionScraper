@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Amazon Transaction Exporter",
+  "version": "1.0.0",
+  "description": "Export Amazon transaction history to CSV",
+  "permissions": [
+    "activeTab",
+    "downloads"
+  ],
+  "host_permissions": [
+    "https://*.amazon.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": [
+        "https://*.amazon.com/*/gp/css/order-history*",
+        "https://*.amazon.com/*/your-orders*",
+        "https://*.amazon.com/your-orders*",
+        "https://*.amazon.com/cpe/yourpayments/transactions*"
+      ],
+      "js": ["content.js"],
+      "css": ["styles.css"],
+      "run_at": "document_end"
+    }
+  ]
+}
+
