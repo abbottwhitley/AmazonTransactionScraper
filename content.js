@@ -4,26 +4,30 @@
   // Configuration
   const CONFIG = {
     TEST_MODE: true,  // Set to true to enable test/debugging mode
-    TEST_MODE_MAX_ORDERS: 20,  // In test mode, only process this many orders
+    TEST_MODE_MAX_ORDERS: 30,  // In test mode, only process this many orders
     TEST_MODE_DELAY_MS: 1000,  // Delay between requests in test mode (ms)
-    PRODUCTION_DELAY_MS: 1000  // Delay between requests in production mode (ms)
+    PRODUCTION_DELAY_MS: 1000,  // Delay between requests in production mode (ms)
+    LOG_LEVEL: 'INFO'  // Log level: 'DEBUG', 'INFO', 'WARN', 'ERROR'
   };
 
-  // Date filter settings (will be set by user via UI)
-  // Default to current month
-  function getDefaultDateFilterSettings() {
-    const now = new Date();
-    const startDate = normalizeDate(new Date(now.getFullYear(), now.getMonth(), 1));
-    const endDate = normalizeDate(new Date(now.getFullYear(), now.getMonth() + 1, 0));
-    return {
-      mode: 'current-month', // 'current-month', 'current-page', 'custom'
-      enabled: true,
-      startDate: startDate,
-      endDate: endDate
-    };
-  }
+  // Initialize logger if available
+  const logger = window.AmazonExporterLogger || {
+    debug: console.debug.bind(console),
+    info: console.log.bind(console),
+    warn: console.warn.bind(console),
+    error: console.error.bind(console),
+    group: console.group.bind(console),
+    groupEnd: console.groupEnd.bind(console)
+  };
+
+  // Initialize constants if available
+  const CONST = window.CONSTANTS || {};
+
+  // Initialize date filter if available
+  const dateFilter = window.AmazonExporterDateFilter;
   
-  let dateFilterSettings = getDefaultDateFilterSettings();
+  // Legacy dateFilterSettings for backward compatibility (will be synced with DateFilter)
+  let dateFilterSettings = dateFilter ? dateFilter.getSettings() : null;
 
   // ============================================================================
   // UTILITY FUNCTIONS
@@ -77,7 +81,11 @@
    * @returns {boolean} True if date is in range or filtering is disabled
    */
   function isDateInTargetRange(parsedDate) {
-    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate || !dateFilterSettings.endDate) {
+    if (dateFilter) {
+      return dateFilter.isDateInTargetRange(parsedDate);
+    }
+    // Fallback for backward compatibility
+    if (!dateFilterSettings || !dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate || !dateFilterSettings.endDate) {
       return true;
     }
     const transDateOnly = normalizeDate(parsedDate.date);
@@ -93,7 +101,11 @@
    * @returns {boolean} True if date is before start date
    */
   function hasPassedTargetMonth(parsedDate) {
-    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate) return false;
+    if (dateFilter) {
+      return dateFilter.hasPassedTargetMonth(parsedDate);
+    }
+    // Fallback for backward compatibility
+    if (!dateFilterSettings || !dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.startDate) return false;
     const transDateOnly = normalizeDate(parsedDate.date);
     const startDateOnly = normalizeDate(dateFilterSettings.startDate);
     return transDateOnly < startDateOnly;
@@ -105,7 +117,11 @@
    * @returns {boolean} True if date is within or before end date
    */
   function shouldContinueCollecting(parsedDate) {
-    if (!dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.endDate) return true;
+    if (dateFilter) {
+      return dateFilter.shouldContinueCollecting(parsedDate);
+    }
+    // Fallback for backward compatibility
+    if (!dateFilterSettings || !dateFilterSettings.enabled || !parsedDate || !dateFilterSettings.endDate) return true;
     const transDateOnly = normalizeDate(parsedDate.date);
     const endDateOnly = normalizeDate(dateFilterSettings.endDate);
     return transDateOnly <= endDateOnly;
@@ -193,12 +209,12 @@
   function init() {
     // Check if button already exists
     if (document.getElementById('amazon-export-btn')) {
-      console.log('Amazon Transaction Exporter: Button already exists');
+      logger.debug('Amazon Transaction Exporter: Button already exists');
       return;
     }
 
-    console.log('Amazon Transaction Exporter: Initializing...');
-    console.log('Current URL:', window.location.href);
+    logger.info('Amazon Transaction Exporter: Initializing...');
+    logger.debug('Current URL:', window.location.href);
 
     // Create export button
     const exportButton = document.createElement('button');
@@ -206,7 +222,7 @@
     exportButton.className = 'amazon-export-button';
     exportButton.textContent = getExportButtonText();
     exportButton.addEventListener('click', (e) => {
-      console.log('Amazon Transaction Exporter: Button clicked');
+      logger.info('Amazon Transaction Exporter: Button clicked');
       e.preventDefault();
       e.stopPropagation();
       showExportModal();
@@ -215,12 +231,14 @@
     // Insert button at the top of the orders/transactions section
     const ordersContainer = findOrdersContainer();
     if (ordersContainer) {
-      console.log('Amazon Transaction Exporter: Found container, inserting button');
+      logger.debug('Amazon Transaction Exporter: Found container, inserting button');
       ordersContainer.insertBefore(exportButton, ordersContainer.firstChild);
     } else {
       // Fallback: insert at top of page or in main content
-      console.log('Amazon Transaction Exporter: Container not found, using fallback');
-      const mainContent = document.querySelector('main, [role="main"], #main-content, .main-content') || document.body;
+      logger.debug('Amazon Transaction Exporter: Container not found, using fallback');
+      const mainContent = CONST.findElementWithFallbacks ? 
+        CONST.findElementWithFallbacks(CONST.COMMON?.mainContent || ['main', '[role="main"]', '#main-content', '.main-content']) || document.body :
+        document.querySelector('main, [role="main"], #main-content, .main-content') || document.body;
       const firstChild = mainContent.firstChild;
       if (firstChild) {
         mainContent.insertBefore(exportButton, firstChild);
@@ -229,44 +247,36 @@
       }
     }
     
-    console.log('Amazon Transaction Exporter: Button added successfully');
+    logger.info('Amazon Transaction Exporter: Button added successfully');
   }
 
   function findOrdersContainer() {
     const isTransactionsPage = window.location.href.includes('/cpe/yourpayments/transactions');
     
     // Try multiple selectors for Amazon's page structure
-    const selectors = isTransactionsPage ? [
-      'table',
-      '[class*="transaction"]',
-      '[class*="Transaction"]',
-      'main',
-      '[role="main"]',
-      '#transactions-container',
-      '.transactions-container'
-    ] : [
-      '[data-testid="order-card-container"]',
-      '.order-card',
-      '#ordersContainer',
-      '.orders-container',
-      '[data-testid="orders-container"]',
-      'div:has(.order-card)',
-      '.your-orders-content'
-    ];
+    const selectors = isTransactionsPage 
+      ? (CONST.TRANSACTION_PAGE?.containers || ['table', '[class*="transaction"]', '[class*="Transaction"]', 'main', '[role="main"]', '#transactions-container', '.transactions-container'])
+      : (CONST.ORDER_HISTORY_PAGE?.containers || ['[data-testid="order-card-container"]', '.order-card', '#ordersContainer', '.orders-container', '[data-testid="orders-container"]', 'div:has(.order-card)', '.your-orders-content']);
 
-    for (const selector of selectors) {
-      const element = document.querySelector(selector);
+    if (CONST.findElementWithFallbacks) {
+      const element = CONST.findElementWithFallbacks(selectors);
       if (element) {
         return element.parentElement || element;
+      }
+    } else {
+      for (const selector of selectors) {
+        const element = document.querySelector(selector);
+        if (element) {
+          return element.parentElement || element;
+        }
       }
     }
 
     // Try to find by common Amazon page patterns
-    const possibleContainers = document.querySelectorAll(
-      isTransactionsPage 
-        ? 'div[class*="transaction"], div[class*="Transaction"], table'
-        : 'div[class*="order"], div[class*="Order"]'
-    );
+    const pattern = isTransactionsPage 
+      ? 'div[class*="transaction"], div[class*="Transaction"], table'
+      : 'div[class*="order"], div[class*="Order"]';
+    const possibleContainers = document.querySelectorAll(pattern);
     if (possibleContainers.length > 0) {
       return possibleContainers[0].parentElement;
     }
@@ -465,12 +475,20 @@
       }
 
       // Store settings
-      dateFilterSettings = {
+      const newSettings = {
         mode: mode,
         enabled: enabled,
         startDate: startDate,
         endDate: endDate
       };
+      
+      // Update DateFilter if available
+      if (dateFilter) {
+        dateFilter.updateSettings(newSettings);
+        dateFilterSettings = dateFilter.getSettings();
+      } else {
+        dateFilterSettings = newSettings;
+      }
 
       closeExportModal();
       exportToCSV();
@@ -488,7 +506,14 @@
   function extractTransactionDates() {
     // Extract date headers from the transactions page
     // Dates appear as headers like "November 3, 2025"
-    const dateElements = document.querySelectorAll('[class*="transaction-date"], [data-pmts-component-id*="transaction-date"] span, span[class*="date"]');
+    const dateSelectors = CONST.TRANSACTION_PAGE?.dateHeaders || [
+      '[class*="transaction-date"]',
+      '[data-pmts-component-id*="transaction-date"] span',
+      'span[class*="date"]'
+    ];
+    const dateElements = CONST.findAllElementsWithFallbacks ? 
+      CONST.findAllElementsWithFallbacks(dateSelectors) :
+      Array.from(document.querySelectorAll(dateSelectors.join(', ')));
     const dates = [];
     
     dateElements.forEach(el => {
@@ -500,7 +525,7 @@
     });
     
     // Also try to find dates in the page text
-    const datePattern = /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/gi;
+    const datePattern = CONST.DATE_PATTERN || /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/gi;
     const pageText = document.body.textContent || '';
     let match;
     while ((match = datePattern.exec(pageText)) !== null) {
@@ -522,7 +547,7 @@
 
   async function clickNextPage() {
     // Find and click the "Next Page" button
-    const nextPageSelectors = [
+    const nextPageSelectors = CONST.TRANSACTION_PAGE?.nextPageButton || [
       'input[name*="NextPage"]',
       'input[value="Next Page"]',
       'a:contains("Next Page")',
@@ -531,7 +556,10 @@
     ];
 
     // Try to find button by text content
-    const allButtons = Array.from(document.querySelectorAll('input[type="submit"], button, a'));
+    const buttonSelectors = CONST.COMMON?.buttons || ['input[type="submit"]', 'button', 'a'];
+    const allButtons = CONST.findAllElementsWithFallbacks ?
+      CONST.findAllElementsWithFallbacks(buttonSelectors) :
+      Array.from(document.querySelectorAll(buttonSelectors.join(', ')));
     const nextButton = allButtons.find(btn => {
       const text = btn.textContent || btn.value || btn.getAttribute('aria-label') || '';
       return text.toLowerCase().includes('next page');
@@ -540,14 +568,14 @@
     if (nextButton) {
       // Check if button is disabled
       if (nextButton.disabled || nextButton.getAttribute('aria-disabled') === 'true') {
-        console.log('Next Page button is disabled');
+        logger.debug('Next Page button is disabled');
         return false;
       }
 
       nextButton.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      await sleep(500);
+      await sleep(CONST.SCROLL_DELAY_MS || 500);
       nextButton.click();
-      await sleep(2000); // Wait for page to load
+      await sleep(CONST.PAGE_LOAD_DELAY_MS || 2000); // Wait for page to load
       return true;
     }
 
@@ -555,19 +583,20 @@
   }
 
   async function navigateToDateRange() {
-    if (!dateFilterSettings.enabled || !dateFilterSettings.startDate) return true;
+    const settings = dateFilter ? dateFilter.getSettings() : dateFilterSettings;
+    if (!settings || !settings.enabled || !settings.startDate) return true;
 
     let pageCount = 0;
-    const maxPages = 50;
-    const targetMonth = dateFilterSettings.startDate.getMonth() + 1;
-    const targetYear = dateFilterSettings.startDate.getFullYear();
+    const maxPages = CONST.MAX_PAGES_TO_COLLECT || 50;
+    const targetMonth = settings.startDate.getMonth() + 1;
+    const targetYear = settings.startDate.getFullYear();
 
     while (pageCount < maxPages) {
       const dates = extractTransactionDates();
-      console.log(`Page ${pageCount + 1}: Found ${dates.length} date headers`);
+      logger.debug(`Page ${pageCount + 1}: Found ${dates.length} date headers`);
 
       if (dates.length === 0) {
-        console.log('No dates found on current page');
+        logger.debug('No dates found on current page');
         break;
       }
 
@@ -576,26 +605,26 @@
       const hasPassedTarget = dates.some(d => hasPassedTargetMonth(d));
 
       if (hasTargetDate) {
-        console.log(`Found target date range (starting ${targetMonth}/${targetYear}) on page ${pageCount + 1}`);
+        logger.info(`Found target date range (starting ${targetMonth}/${targetYear}) on page ${pageCount + 1}`);
         return true;
       }
 
       if (hasPassedTarget && !hasTargetDate) {
-        console.log(`Passed target date range, stopping pagination`);
+        logger.info(`Passed target date range, stopping pagination`);
         return false;
       }
 
       // Click to next page
       const clicked = await clickNextPage();
       if (!clicked) {
-        console.log('Could not click Next Page button');
+        logger.warn('Could not click Next Page button');
         return false;
       }
 
       pageCount++;
     }
 
-    console.log(`Reached max pages (${maxPages}) without finding target date range`);
+    logger.warn(`Reached max pages (${maxPages}) without finding target date range`);
     return false;
   }
 
@@ -606,15 +635,16 @@
   async function collectAllOrderLinks() {
     const allOrderLinks = [];
     let pageCount = 0;
+    const settings = dateFilter ? dateFilter.getSettings() : dateFilterSettings;
     
-    if (dateFilterSettings.enabled && dateFilterSettings.startDate && dateFilterSettings.endDate) {
+    if (settings && settings.enabled && settings.startDate && settings.endDate) {
       // Collect links from all pages that contain dates in the range
-      const maxPages = 50;
+      const maxPages = CONST.MAX_PAGES_TO_COLLECT || 50;
       let passedEndDate = false;
 
       while (pageCount < maxPages && !passedEndDate) {
         const pageOrderLinks = extractOrderLinks();
-        console.log(`Collection Page ${pageCount + 1}: Found ${pageOrderLinks.length} order links`);
+        logger.debug(`Collection Page ${pageCount + 1}: Found ${pageOrderLinks.length} order links`);
         
         allOrderLinks.push(...pageOrderLinks);
         
@@ -623,14 +653,14 @@
         const hasPassedEnd = dates.every(d => !shouldContinueCollecting(d));
         
         if (hasPassedEnd && !hasTargetDate) {
-          console.log('Passed end date, stopping page collection');
+          logger.info('Passed end date, stopping page collection');
           passedEndDate = true;
           break;
         }
 
         const clicked = await clickNextPage();
         if (!clicked) {
-          console.log('No more pages available');
+          logger.info('No more pages available');
           break;
         }
 
@@ -643,7 +673,7 @@
       pageCount = 1;
     }
 
-    console.log(`Collected ${allOrderLinks.length} total order links from ${pageCount} page(s)`);
+    logger.info(`Collected ${allOrderLinks.length} total order links from ${pageCount} page(s)`);
     return allOrderLinks;
   }
 
@@ -653,32 +683,25 @@
    * @returns {Array} Filtered array of order links
    */
   function filterOrdersByDateRange(orderLinks) {
-    // Check if we have any orders with transaction dates when date filtering is enabled
-    if (dateFilterSettings.enabled) {
-      const ordersWithDates = orderLinks.filter(link => link.transactionDate).length;
-      if (ordersWithDates === 0 && orderLinks.length > 0) {
-        console.warn('WARNING: Date filtering is enabled but no transaction dates were extracted for any orders.');
-        console.warn('This might indicate an issue with date extraction. Proceeding without date filtering to avoid excluding all orders.');
-        dateFilterSettings.enabled = false;
-      }
-    }
-    
     // Limit orders in test mode
     let filteredLinks = CONFIG.TEST_MODE 
       ? orderLinks.slice(0, CONFIG.TEST_MODE_MAX_ORDERS)
       : orderLinks;
     
     if (CONFIG.TEST_MODE) {
-      console.log(`🧪 TEST MODE: Processing only ${filteredLinks.length} of ${orderLinks.length} orders`);
+      logger.info(`🧪 TEST MODE: Processing only ${filteredLinks.length} of ${orderLinks.length} orders`);
     }
 
-    // Filter by date range if enabled
-    if (dateFilterSettings.enabled) {
-      console.log(`Filtering ${filteredLinks.length} orders by date range: ${dateFilterSettings.startDate?.toLocaleDateString()} - ${dateFilterSettings.endDate?.toLocaleDateString()}`);
+    // Filter by date range if enabled (using DateFilter if available)
+    if (dateFilter && dateFilter.isEnabled()) {
+      filteredLinks = dateFilter.filterOrdersByDateRange(filteredLinks);
+    } else if (dateFilterSettings && dateFilterSettings.enabled) {
+      // Fallback for backward compatibility
+      logger.info(`Filtering ${filteredLinks.length} orders by date range: ${dateFilterSettings.startDate?.toLocaleDateString()} - ${dateFilterSettings.endDate?.toLocaleDateString()}`);
       
       filteredLinks = filteredLinks.filter(orderLink => {
         if (!orderLink.transactionDate) {
-          console.warn(`Order ${orderLink.orderId} has no transaction date extracted. Including order anyway.`);
+          logger.warn(`Order ${orderLink.orderId} has no transaction date extracted. Including order anyway.`);
           return true;
         }
         
@@ -690,15 +713,15 @@
         
         const inRange = isDateInTargetRange(transactionDateObj);
         if (inRange) {
-          console.log(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is IN date range`);
+          logger.debug(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is IN date range`);
           return true;
         } else {
-          console.log(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is OUT of date range, filtering out`);
+          logger.debug(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is OUT of date range, filtering out`);
           return false;
         }
       });
       
-      console.log(`Date filtering result: ${filteredLinks.length} of ${orderLinks.length} orders match the date range`);
+      logger.info(`Date filtering result: ${filteredLinks.length} of ${orderLinks.length} orders match the date range`);
     }
 
     return filteredLinks;
@@ -727,10 +750,10 @@
         const details = await fetchOrderDetails(orderLink.url, orderLink.orderId, orderLink.transactionDate);
         if (details) {
           orderDetails.push(details);
-          console.log(`Successfully fetched order ${orderLink.orderId}`);
+          logger.debug(`Successfully fetched order ${orderLink.orderId}`);
         }
       } catch (error) {
-        console.error(`Error fetching order ${orderLink.orderId}:`, error);
+        logger.error(`Error fetching order ${orderLink.orderId}:`, error);
       }
       
       if (i < orderLinks.length - 1) {
@@ -747,7 +770,7 @@
   async function exportToCSV() {
     const button = document.getElementById('amazon-export-btn');
     if (!button) {
-      console.error('Export button not found');
+      logger.error('Export button not found');
       return;
     }
 
@@ -756,8 +779,9 @@
       button.disabled = true;
 
       // Navigate to target date range if needed
-      if (dateFilterSettings.enabled && dateFilterSettings.startDate) {
-        const startDateStr = dateFilterSettings.startDate.toLocaleDateString();
+      const settings = dateFilter ? dateFilter.getSettings() : dateFilterSettings;
+      if (settings && settings.enabled && settings.startDate) {
+        const startDateStr = settings.startDate.toLocaleDateString();
         button.textContent = getExportButtonText({ customText: `🔄 Navigating to ${startDateStr}...` });
         const foundTarget = await navigateToDateRange();
         if (!foundTarget) {
@@ -773,7 +797,7 @@
       // Log order statistics
       const ordersWithDates = allOrderLinks.filter(link => link.transactionDate).length;
       const ordersWithoutDates = allOrderLinks.length - ordersWithDates;
-      console.log(`Orders with transaction dates: ${ordersWithDates}, Orders without dates: ${ordersWithoutDates}`);
+      logger.info(`Orders with transaction dates: ${ordersWithDates}, Orders without dates: ${ordersWithoutDates}`);
 
       if (allOrderLinks.length === 0) {
         alert('No order links found. Make sure you are on the Amazon Transactions page.');
@@ -786,8 +810,9 @@
 
       if (ordersToProcess.length === 0) {
         let errorMessage = 'Could not find any orders to process. ';
-        if (dateFilterSettings.enabled) {
-          errorMessage += `No orders found in the selected date range (${dateFilterSettings.startDate?.toLocaleDateString()} - ${dateFilterSettings.endDate?.toLocaleDateString()}). Please check the date range or try exporting the current page only.`;
+        const settings = dateFilter ? dateFilter.getSettings() : dateFilterSettings;
+        if (settings && settings.enabled) {
+          errorMessage += `No orders found in the selected date range (${settings.startDate?.toLocaleDateString()} - ${settings.endDate?.toLocaleDateString()}). Please check the date range or try exporting the current page only.`;
         } else {
           errorMessage += 'Please try again.';
         }
@@ -801,8 +826,9 @@
 
       if (orderDetails.length === 0) {
         let errorMessage = 'Could not fetch any order details. ';
-        if (dateFilterSettings.enabled) {
-          errorMessage += `No orders found in the selected date range (${dateFilterSettings.startDate?.toLocaleDateString()} - ${dateFilterSettings.endDate?.toLocaleDateString()}). Please check the date range or try exporting the current page only.`;
+        const settings = dateFilter ? dateFilter.getSettings() : dateFilterSettings;
+        if (settings && settings.enabled) {
+          errorMessage += `No orders found in the selected date range (${settings.startDate?.toLocaleDateString()} - ${settings.endDate?.toLocaleDateString()}). Please check the date range or try exporting the current page only.`;
         } else {
           errorMessage += 'Please try again.';
         }
@@ -825,7 +851,7 @@
       }, 3000);
 
     } catch (error) {
-      console.error('Export error:', error);
+      logger.error('Export error:', error);
       alert('Error exporting transactions: ' + error.message);
       resetExportButton(button);
     }
@@ -882,8 +908,8 @@
     // First, build a map of date headers and their positions in the DOM
     // This helps us correctly associate each order with its date
     const dateHeaders = [];
-    const datePattern = /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i;
-    const dateSelectors = [
+    const datePattern = CONST.DATE_PATTERN ? new RegExp(CONST.DATE_PATTERN.source, 'i') : /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i;
+    const dateSelectors = CONST.TRANSACTION_PAGE?.dateHeaders || [
       '[class*="transaction-date"]',
       '[data-pmts-component-id*="transaction-date"]',
       '[class*="TransactionDate"]'
@@ -891,7 +917,9 @@
     
     // Find all date headers on the page
     dateSelectors.forEach(selector => {
-      const dateElements = document.querySelectorAll(selector);
+      const dateElements = CONST.findAllElementsWithFallbacks ?
+        CONST.findAllElementsWithFallbacks([selector]) :
+        Array.from(document.querySelectorAll(selector));
       dateElements.forEach(el => {
         const dateText = el.textContent?.trim() || '';
         const match = dateText.match(datePattern);
@@ -911,10 +939,10 @@
     // Sort by DOM position (top to bottom)
     dateHeaders.sort((a, b) => a.position - b.position);
     
-    console.log(`Found ${dateHeaders.length} date headers on page`);
+    logger.debug(`Found ${dateHeaders.length} date headers on page`);
 
     // First, try to find links that contain order detail URLs
-    const orderDetailLinkSelectors = [
+    const orderDetailLinkSelectors = CONST.TRANSACTION_PAGE?.orderLinks || [
       'a[href*="/gp/your-account/order-details"]',
       'a[href*="/your-account/order-details"]',
       'a[href*="order-details"]',
@@ -922,16 +950,20 @@
     ];
 
     orderDetailLinkSelectors.forEach(selector => {
-      const links = Array.from(document.querySelectorAll(selector));
+      const links = CONST.findAllElementsWithFallbacks ?
+        CONST.findAllElementsWithFallbacks([selector]) :
+        Array.from(document.querySelectorAll(selector));
       links.forEach(link => {
         const href = link.getAttribute('href');
         const text = link.textContent || '';
         
         // Extract order ID from text or href
-        let orderMatch = text.match(/Order\s*#?\s*([\d-]+)/i);
+        const orderIdPattern = CONST.ORDER_ID_PATTERN || /Order\s*#?\s*([\d-]+)/i;
+        let orderMatch = text.match(orderIdPattern);
         if (!orderMatch && href) {
           // Try to extract from URL
-          orderMatch = href.match(/order[_-]?id[=_]?([\d-]+)|[/-]([\d-]{10,})[/-]/i);
+          const urlPattern = CONST.ORDER_ID_URL_PATTERN || /order[_-]?id[=_]?([\d-]+)|[/-]([\d-]{10,})[/-]/i;
+          orderMatch = href.match(urlPattern);
           if (orderMatch) {
             orderMatch = [null, orderMatch[1] || orderMatch[2]];
           }
@@ -960,7 +992,7 @@
     // Also search for order numbers in the page and find nearby links
     // This handles cases where order number text is near but not inside the link
     // Also handles "Refund: Order #" pattern
-    const orderPattern = /(?:Refund:)?\s*Order\s*#?\s*([\d-]+)/gi;
+    const orderPattern = CONST.ORDER_ID_PATTERN_WITH_REFUND || /(?:Refund:)?\s*Order\s*#?\s*([\d-]+)/gi;
     const walker = document.createTreeWalker(
       document.body,
       NodeFilter.SHOW_TEXT,
@@ -1031,7 +1063,7 @@
       }
     }
 
-    console.log(`Extracted ${orderLinkMap.size} unique order links`);
+    logger.info(`Extracted ${orderLinkMap.size} unique order links`);
     const orderLinks = Array.from(orderLinkMap.values());
     
     // Log transaction dates for debugging and count how many have dates
@@ -1039,18 +1071,18 @@
     let datesMissing = 0;
     orderLinks.forEach(link => {
       if (link.transactionDate) {
-        console.log(`Order ${link.orderId}: transaction date = ${link.transactionDate.toLocaleDateString()}`);
+        logger.debug(`Order ${link.orderId}: transaction date = ${link.transactionDate.toLocaleDateString()}`);
         datesFound++;
       } else {
-        console.warn(`Order ${link.orderId}: no transaction date found`);
+        logger.warn(`Order ${link.orderId}: no transaction date found`);
         datesMissing++;
       }
     });
     
-    console.log(`Transaction date extraction summary: ${datesFound} orders with dates, ${datesMissing} orders without dates`);
+    logger.info(`Transaction date extraction summary: ${datesFound} orders with dates, ${datesMissing} orders without dates`);
     
     if (datesMissing > 0 && datesFound === 0) {
-      console.error('WARNING: No transaction dates were extracted for any orders! This will cause date filtering to fail.');
+      logger.error('WARNING: No transaction dates were extracted for any orders! This will cause date filtering to fail.');
     }
     
     return orderLinks;
@@ -1058,7 +1090,7 @@
 
   async function fetchOrderDetails(orderUrl, orderId, transactionDate) {
     try {
-      console.log(`Fetching order details for ${orderId} from ${orderUrl}`);
+      logger.debug(`Fetching order details for ${orderId} from ${orderUrl}`);
       
       // Fetch the order page HTML with credentials
       const response = await fetch(orderUrl, {
@@ -1080,7 +1112,7 @@
       
       return orderDetails;
     } catch (error) {
-      console.error(`Error fetching order ${orderId}:`, error);
+      logger.error(`Error fetching order ${orderId}:`, error);
       return null;
     }
   }
@@ -1103,7 +1135,7 @@
     };
 
     // Extract order placed date (from order details page)
-    const datePatterns = [
+    const datePatterns = CONST.DATE_EXTRACTION_PATTERNS || [
       /(?:Ordered on|Placed on|Order date)[:\s]+([^\n<]+)/i,
       /Order\s+placed\s+(\w+ \d{1,2}, \d{4})/i,
       /(\w+ \d{1,2}, \d{4})/,
@@ -1120,7 +1152,7 @@
     }
 
     // Extract refund total first (if it exists)
-    const refundTotalPatterns = [
+    const refundTotalPatterns = CONST.REFUND_PATTERNS || [
       /Refund\s+Total[:\s]*\$?([\d,]+\.?\d*)/i
     ];
     
@@ -1146,7 +1178,7 @@
 
     // Extract order total - specifically look for Grand Total
     // Avoid Item(s) Subtotal, Shipping & Handling, etc.
-    const grandTotalPatterns = [
+    const grandTotalPatterns = CONST.GRAND_TOTAL_PATTERNS || [
       /Grand\s+Total[:\s]*\$?([\d,]+\.?\d*)/i,
       /Order\s+Total[:\s]*\$?([\d,]+\.?\d*)/i,
       /(?:Total\s+for\s+this\s+Order|Total\s+charged)[:\s]*\$?([\d,]+\.?\d*)/i
@@ -1159,8 +1191,9 @@
       const matches = bodyText.matchAll(new RegExp(pattern.source, 'gi'));
       for (const match of matches) {
         // Make sure it's not in a context that suggests it's a subtotal
-        const contextStart = Math.max(0, match.index - 50);
-        const contextEnd = Math.min(bodyText.length, match.index + match[0].length + 50);
+        const contextSize = CONST.CONTEXT_WINDOW_SIZE || 50;
+        const contextStart = Math.max(0, match.index - contextSize);
+        const contextEnd = Math.min(bodyText.length, match.index + match[0].length + contextSize);
         const context = bodyText.substring(contextStart, contextEnd);
         
         // Skip if it looks like a subtotal or intermediate total
@@ -1177,7 +1210,8 @@
     
     // If Grand Total not found, look for the last/largest total value
     if (!foundGrandTotal) {
-      const allAmounts = bodyText.matchAll(/\$([\d,]+\.?\d*)/g);
+      const pricePattern = CONST.PRICE_PATTERN || /\$([\d,]+\.?\d*)/g;
+      const allAmounts = bodyText.matchAll(pricePattern);
       const amounts = [];
       for (const match of allAmounts) {
         const amount = parseFloat(match[1].replace(/,/g, ''));
@@ -1201,7 +1235,7 @@
     }
 
     // Extract items - only actual product names, not order summary fields
-    const excludedKeywords = [
+    const excludedKeywords = CONST.EXCLUDED_KEYWORDS || [
       'Item(s) Subtotal', 'Subtotal', 'Shipping & Handling', 'Shipping', 
       'Free Shipping', 'Total before tax', 'Estimated tax', 'Grand Total',
       'Order Total', 'Your Coupon Savings', 'Subscribe & Save', 
@@ -1210,7 +1244,7 @@
     ];
 
     // Try to find item containers/rows that contain product information
-    const itemSelectors = [
+    const itemSelectors = CONST.ORDER_DETAIL_PAGE?.items || [
       '[data-item]',
       '.yohtmlc-item',
       '[class*="yo-item"]',
@@ -1227,10 +1261,13 @@
       if (containers.length > 0) {
         containers.forEach(container => {
           // Look for links or spans that might contain product names
-          const productLinks = container.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"]');
+          const productLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks || ['a[href*="/dp/"]', 'a[href*="/gp/product/"]'];
+          const productLinks = container.querySelectorAll(productLinkSelectors.join(', '));
           productLinks.forEach(link => {
             const linkText = link.textContent?.trim();
-            if (linkText && linkText.length > 5 && linkText.length < 200) {
+            const minLength = CONST.MIN_TEXT_LENGTH || 5;
+            const maxLength = CONST.MAX_TEXT_LENGTH || 200;
+            if (linkText && linkText.length > minLength && linkText.length < maxLength) {
               // Check if it's not a summary field
               const isExcluded = excludedKeywords.some(keyword => 
                 linkText.toLowerCase().includes(keyword.toLowerCase())
@@ -1243,24 +1280,31 @@
 
           // Also check for product titles in the container
           const containerText = container.textContent?.trim() || '';
-          if (containerText.length > 10) {
+          const minTextLengthStrict = CONST.MIN_TEXT_LENGTH_STRICT || 10;
+          if (containerText.length > minTextLengthStrict) {
             // Split by lines and look for product-like text
-            const lines = containerText.split('\n').map(l => l.trim()).filter(l => l.length > 5);
+            const minLength = CONST.MIN_TEXT_LENGTH || 5;
+            const lines = containerText.split('\n').map(l => l.trim()).filter(l => l.length > minLength);
             lines.forEach(line => {
               // Skip if it looks like a summary field
               const isExcluded = excludedKeywords.some(keyword => 
                 line.toLowerCase().includes(keyword.toLowerCase())
               );
               // Skip if it looks like a price or quantity
-              const looksLikePrice = /^\$[\d,]+\.?\d*$/.test(line) || /^Qty:?\s*\d+/.test(line);
+              const pricePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
+              const quantityPattern = CONST.QUANTITY_PATTERN || /^Qty:?\s*\d+/;
+              const looksLikePrice = pricePattern.test(line) || quantityPattern.test(line);
               // Skip if it's too short or looks like metadata
-              const looksLikeMetadata = /^(Condition|Sold by|Shipped by|Qty|Quantity):/i.test(line);
+              const metadataPattern = CONST.METADATA_PATTERN || /^(Condition|Sold by|Shipped by|Qty|Quantity):/i;
+              const looksLikeMetadata = metadataPattern.test(line);
               
+              const maxLength = CONST.MAX_TEXT_LENGTH || 200;
               if (!isExcluded && !looksLikePrice && !looksLikeMetadata && 
-                  line.length > 10 && line.length < 200) {
+                  line.length > minTextLengthStrict && line.length < maxLength) {
                 // Check if it contains actual text (not just numbers/symbols)
-                if (/[a-zA-Z]{3,}/.test(line)) {
-                  itemContainers.add(line.substring(0, 200));
+                const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
+                if (textPattern.test(line)) {
+                  itemContainers.add(line.substring(0, maxLength));
                 }
               }
             });
@@ -1272,27 +1316,33 @@
 
     // If still no items, try a more targeted search for product links
     if (itemContainers.size === 0) {
-      const allProductLinks = doc.querySelectorAll('a[href*="/dp/"], a[href*="/gp/product/"], a[href*="/gp/item-detail/"]');
+      const allProductLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks || ['a[href*="/dp/"]', 'a[href*="/gp/product/"]', 'a[href*="/gp/item-detail/"]'];
+      const allProductLinks = doc.querySelectorAll(allProductLinkSelectors.join(', '));
+      const minTextLengthStrict = CONST.MIN_TEXT_LENGTH_STRICT || 10;
+      const maxLength = CONST.MAX_TEXT_LENGTH || 200;
+      const parentSearchDepth = CONST.PARENT_SEARCH_DEPTH || 5;
       allProductLinks.forEach(link => {
         const linkText = link.textContent?.trim();
-        if (linkText && linkText.length > 10 && linkText.length < 200) {
+        if (linkText && linkText.length > minTextLengthStrict && linkText.length < maxLength) {
           const isExcluded = excludedKeywords.some(keyword => 
             linkText.toLowerCase().includes(keyword.toLowerCase())
           );
           // Make sure it's not in the order summary section
           let parent = link.parentElement;
           let inSummary = false;
-          for (let i = 0; i < 5 && parent; i++) {
+          const summaryPatterns = CONST.SUMMARY_SECTION_PATTERNS || [/Order\s+Summary/i, /Payment\s+Information/i, /Order\s+Total/i];
+          for (let i = 0; i < parentSearchDepth && parent; i++) {
             const parentText = parent.textContent || '';
-            if (parentText.match(/Order\s+Summary|Payment\s+Information|Order\s+Total/i)) {
+            if (summaryPatterns.some(pattern => pattern.test(parentText))) {
               inSummary = true;
               break;
             }
             parent = parent.parentElement;
           }
           
-          if (!isExcluded && !inSummary && /[a-zA-Z]{3,}/.test(linkText)) {
-            itemContainers.add(linkText.substring(0, 200));
+          const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
+          if (!isExcluded && !inSummary && textPattern.test(linkText)) {
+            itemContainers.add(linkText.substring(0, maxLength));
           }
         }
       });
@@ -1301,7 +1351,7 @@
     orderDetails.items = Array.from(itemContainers);
 
     // Extract payment method
-    const paymentPatterns = [
+    const paymentPatterns = CONST.PAYMENT_PATTERNS || [
       /(?:Payment method|Paid with|Payment)[:\s]+([^\n<]+)/i,
       /(?:Card ending|Card)[:\s]+([^\d\n<]+[\d]+)/i
     ];
@@ -1316,11 +1366,11 @@
 
     // Extract order status - be very specific to avoid matching code or other text
     // Look for actual status words in context, not just anywhere
-    const statusKeywords = ['Shipped', 'Delivered', 'Cancelled', 'Pending', 'Processing', 'Returned', 'Refunded'];
+    const statusKeywords = CONST.STATUS_KEYWORDS || ['Shipped', 'Delivered', 'Cancelled', 'Pending', 'Processing', 'Returned', 'Refunded'];
     let foundStatus = '';
     
     // First, try to find status in structured sections
-    const statusSelectors = [
+    const statusSelectors = CONST.ORDER_DETAIL_PAGE?.status || [
       '[class*="status"]',
       '[data-testid*="status"]',
       '[id*="status"]'
@@ -1330,8 +1380,9 @@
       const statusElements = doc.querySelectorAll(selector);
       for (const element of statusElements) {
         const text = element.textContent?.trim() || '';
+        const maxStatusTextLength = CONST.MAX_STATUS_TEXT_LENGTH || 100;
         for (const keyword of statusKeywords) {
-          if (text.includes(keyword) && text.length < 100) { // Avoid matching long text blocks
+          if (text.includes(keyword) && text.length < maxStatusTextLength) { // Avoid matching long text blocks
             foundStatus = keyword;
             break;
           }
@@ -1343,23 +1394,25 @@
     
     // If not found in structured sections, look for status in specific patterns
     if (!foundStatus) {
-      const statusPatterns = [
+      const statusPatterns = CONST.STATUS_PATTERNS || [
         /Order\s+Status[:\s]+(Shipped|Delivered|Cancelled|Pending|Processing|Returned|Refunded)/i,
         /Status[:\s]+(Shipped|Delivered|Cancelled|Pending|Processing|Returned|Refunded)/i,
         /(?:Your\s+order\s+has\s+been\s+)?(Shipped|Delivered|Cancelled|Pending|Processing|Returned|Refunded)/i
       ];
       
+      const contextCheckSize = CONST.CONTEXT_CHECK_SIZE || 20;
+      const codeContextPattern = CONST.CODE_CONTEXT_PATTERN || /[<>=&|!]+|function|var|const|let|if\s*\(/;
       for (const pattern of statusPatterns) {
         const match = bodyText.match(pattern);
         if (match && match[1]) {
           // Make sure it's not part of code (check context)
           const matchIndex = bodyText.indexOf(match[0]);
-          const contextStart = Math.max(0, matchIndex - 20);
-          const contextEnd = Math.min(bodyText.length, matchIndex + match[0].length + 20);
+          const contextStart = Math.max(0, matchIndex - contextCheckSize);
+          const contextEnd = Math.min(bodyText.length, matchIndex + match[0].length + contextCheckSize);
           const context = bodyText.substring(contextStart, contextEnd);
           
           // Skip if it looks like code (contains operators, brackets, etc.)
-          if (!context.match(/[<>=&|!]+|function|var|const|let|if\s*\(/)) {
+          if (!codeContextPattern.test(context)) {
             foundStatus = match[1];
             break;
           }
@@ -1381,13 +1434,13 @@
     let previousCount = 0;
     let currentCount = 0;
     let attempts = 0;
-    const maxAttempts = 10;
+    const maxAttempts = CONST.MAX_ATTEMPTS || 10;
 
     do {
       previousCount = currentCount;
       
       // Try to find and click "Show more" or "Load more" buttons
-      const loadMoreButtons = [
+      const loadMoreButtons = CONST.ORDER_HISTORY_PAGE?.loadMoreButtons || [
         'button:contains("Show more")',
         'button:contains("Load more")',
         '[aria-label*="Show more"]',
@@ -1406,21 +1459,24 @@
           
           if (button && button.offsetParent !== null) {
             button.scrollIntoView({ behavior: 'smooth', block: 'center' });
-            await sleep(500);
+            await sleep(CONST.SCROLL_DELAY_MS || 500);
             button.click();
-            await sleep(2000); // Wait for content to load
+            await sleep(CONST.PAGE_LOAD_DELAY_MS || 2000); // Wait for content to load
             break;
           }
         } catch (e) {
-          console.log('Could not find load more button:', e);
+          logger.debug('Could not find load more button:', e);
         }
       }
 
       // Scroll to bottom to trigger infinite scroll if present
       window.scrollTo(0, document.body.scrollHeight);
-      await sleep(1000);
+      await sleep(CONST.INFINITE_SCROLL_DELAY_MS || 1000);
 
-      currentCount = document.querySelectorAll('[data-testid="order-card"], .order-card, div[class*="order-card"]').length;
+      const orderCardSelectors = CONST.ORDER_HISTORY_PAGE?.orderCards || ['[data-testid="order-card"]', '.order-card', 'div[class*="order-card"]'];
+      currentCount = CONST.findAllElementsWithFallbacks ?
+        CONST.findAllElementsWithFallbacks(orderCardSelectors).length :
+        document.querySelectorAll(orderCardSelectors.join(', ')).length;
       attempts++;
     } while (currentCount > previousCount && attempts < maxAttempts);
   }
@@ -1435,7 +1491,7 @@
     
     if (isTransactionsPage) {
       // Try to find transaction rows in tables or transaction containers
-      const transactionSelectors = [
+      const transactionSelectors = CONST.TRANSACTION_PAGE?.transactionRows || [
         'table tbody tr',
         '[data-testid*="transaction"]',
         'div[class*="transaction"]',
@@ -1445,16 +1501,21 @@
       ];
       
       for (const selector of transactionSelectors) {
-        orderElements = Array.from(document.querySelectorAll(selector));
+        orderElements = CONST.findAllElementsWithFallbacks ?
+          CONST.findAllElementsWithFallbacks([selector]) :
+          Array.from(document.querySelectorAll(selector));
         if (orderElements.length > 0) {
-          console.log(`Found ${orderElements.length} transactions using selector: ${selector}`);
+          logger.debug(`Found ${orderElements.length} transactions using selector: ${selector}`);
           break;
         }
       }
       
       // Also try to find by text content patterns for transactions
       if (orderElements.length === 0) {
-        const allRows = Array.from(document.querySelectorAll('tr, div[role="row"]'));
+        const rowSelectors = CONST.COMMON?.rows || ['tr', 'div[role="row"]'];
+        const allRows = CONST.findAllElementsWithFallbacks ?
+          CONST.findAllElementsWithFallbacks(rowSelectors) :
+          Array.from(document.querySelectorAll(rowSelectors.join(', ')));
         orderElements = allRows.filter(row => {
           const text = row.textContent || '';
           return (text.includes('$') || text.match(/\d{1,2}\/\d{1,2}\/\d{4}/) || 
@@ -1463,7 +1524,7 @@
       }
     } else {
       // Try multiple selectors for order cards (orders page)
-      const orderSelectors = [
+      const orderSelectors = CONST.ORDER_HISTORY_PAGE?.orderCards || [
         '[data-testid="order-card"]',
         '.order-card',
         'div[class*="order-card"]',
@@ -1471,7 +1532,9 @@
       ];
 
       for (const selector of orderSelectors) {
-        orderElements = Array.from(document.querySelectorAll(selector));
+        orderElements = CONST.findAllElementsWithFallbacks ?
+          CONST.findAllElementsWithFallbacks([selector]) :
+          Array.from(document.querySelectorAll(selector));
         if (orderElements.length > 0) break;
       }
     }
@@ -1488,7 +1551,7 @@
       });
     }
 
-    console.log(`Found ${orderElements.length} potential transaction elements`);
+    logger.debug(`Found ${orderElements.length} potential transaction elements`);
 
     orderElements.forEach((orderElement, index) => {
       try {
@@ -1497,7 +1560,7 @@
           transactions.push(transaction);
         }
       } catch (error) {
-        console.error(`Error parsing order ${index}:`, error);
+        logger.error(`Error parsing order ${index}:`, error);
       }
     });
 

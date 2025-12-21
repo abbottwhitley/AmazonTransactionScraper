@@ -1102,9 +1102,9 @@ const startIndex = progress.completed || 0;
 | Extract utility functions | High | Low | **P0** | ✅ **Completed** |
 | Break down `exportToCSV()` | High | Medium | **P0** | ✅ **Completed** |
 | Centralize button text | Medium | Low | **P1** | ✅ **Completed** |
-| Add logger utility | Medium | Low | **P1** | ⏳ Pending |
-| Create constants file | Medium | Low | **P1** | ⏳ Pending |
-| Extract date filtering | High | Medium | **P1** | ⏳ Pending |
+| Add logger utility | Medium | Low | **P1** | ✅ **Completed** |
+| Create constants file | Medium | Low | **P1** | ✅ **Completed** |
+| Extract date filtering | High | Medium | **P1** | ✅ **Completed** |
 | Error handling improvements | High | Medium | **P2** | ⏳ Pending |
 | Modular file structure | High | High | **P2** | ⏳ Pending |
 | Add tests | High | High | **P2** | ⏳ Pending |

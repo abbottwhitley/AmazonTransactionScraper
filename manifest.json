@@ -18,7 +18,7 @@
         "https://*.amazon.com/your-orders*",
         "https://*.amazon.com/cpe/yourpayments/transactions*"
       ],
-      "js": ["content.js"],
+      "js": ["logger.js", "constants.js", "dateFilter.js", "content.js"],
       "css": ["styles.css"],
       "run_at": "document_end"
     }
