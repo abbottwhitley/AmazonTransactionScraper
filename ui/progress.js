@@ -5,8 +5,9 @@
    * Progress indicators and status updates
    */
   class ProgressIndicator {
-    constructor(button) {
-      this.button = button;
+    constructor(button, buttonInstance = null) {
+      this.button = button; // The DOM element
+      this.buttonInstance = buttonInstance; // The ExportButton class instance (optional)
       this.appState = window.AmazonExporterAppState;
     }
 
@@ -17,14 +18,20 @@
      */
     update(current, total) {
       if (this.button) {
-        const buttonText = window.AmazonExporterButton ? 
-          new window.AmazonExporterButton().getButtonText({ 
-            isExporting: true, 
-            progress: { current, total } 
-          }) :
-          `🔄 Fetching order ${current}/${total}...`;
-        
-        this.button.textContent = buttonText;
+        // Try to use the button instance's updateText method if available
+        // Otherwise, update textContent directly
+        if (this.buttonInstance && typeof this.buttonInstance.updateText === 'function') {
+          this.buttonInstance.updateText({ isExporting: true, progress: { current, total } });
+        } else {
+          const buttonText = window.AmazonExporterButton ? 
+            new window.AmazonExporterButton().getButtonText({ 
+              isExporting: true, 
+              progress: { current, total } 
+            }) :
+            `🔄 Fetching order ${current}/${total}...`;
+          
+          this.button.textContent = buttonText;
+        }
       }
 
       // Update app state if available

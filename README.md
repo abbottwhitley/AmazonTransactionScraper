@@ -39,6 +39,22 @@ The extension provides three export modes:
    - Supports quick month/year selection or custom date inputs
    - Automatically navigates to the date range and collects all matching orders
 
+### CSV Format Selection
+
+The export modal includes a CSV format selector:
+
+- **Simplifi Format** (Default): Optimized for budgeting apps like Simplifi
+  - Simplified columns: Date, Payee, Amount, Category, Tags, Notes, Check_No
+  - Amounts are negative (purchases)
+  - Payee is always "Amazon"
+  - Category is always "Shopping"
+  
+- **Detailed Format**: Comprehensive format with all order details
+  - Includes all available fields: Order Number, Transaction Date, Order Placed Date, Order Total, Refund Amount, Items, Payment Method, Status, Order URL
+  - Useful for detailed analysis or custom processing
+
+Your format preference is saved and will be remembered for future exports.
+
 ### Export Process
 
 When you click "Export":
@@ -52,21 +68,45 @@ When you click "Export":
 
 ## CSV Export Format
 
-The exported CSV file includes the following columns:
+The extension supports two CSV export formats, which can be selected in the export modal:
+
+### 1. Simplifi Format (Default)
+
+Optimized for importing into Simplifi and other budgeting apps. Includes the following columns:
+
+- **Date**: Transaction date in MM/DD/YYYY format (used for filtering)
+- **Payee**: Always "Amazon"
+- **Amount**: Order total as a negative number (purchases are negative in budgeting apps)
+- **Category**: Always "Shopping"
+- **Tags**: Blank (for manual tagging in your budgeting app)
+- **Notes**: Items list (semicolon-separated) + Order URL (separated by ` | `)
+- **Check_No**: Blank
+
+**Example:**
+```csv
+Date,Payee,Amount,Category,Tags,Notes,Check_No
+11/21/2025,Amazon,-123.45,Shopping,,"Item 1; Item 2 | https://amazon.com/...",
+```
+
+### 2. Detailed Format
+
+Comprehensive format with all available order information. Includes the following columns:
 
 - **Order Number**: Amazon order ID (e.g., "113-2409867-7588258")
 - **Transaction Date**: Date from the transactions page grouping (used for filtering)
 - **Order Placed Date**: Date when the order was placed (from order details page)
 - **Order Total**: Grand total amount (net amount after refunds)
 - **Refund Amount**: Refund amount if applicable (empty if no refund)
-- **Items**: Comma-separated list of product names
+- **Items**: Semicolon-separated list of product names
 - **Payment Method**: Payment method used (e.g., "Visa ending in 1234")
 - **Status**: Order status (e.g., "Delivered", "Shipped")
 - **Order URL**: Direct link to the order detail page
 
+**Note:** Your CSV format preference is saved and will be remembered for future exports.
+
 ### Date Filtering
 
-The extension filters orders by the **Transaction Date** (the grouping date shown on the transactions page), not the "Order Placed" date. This ensures the filtering matches what you see on the transactions page. Both dates are included in the CSV for reference.
+The extension filters orders by the **Transaction Date** (the grouping date shown on the transactions page), not the "Order Placed" date. This ensures the filtering matches what you see on the transactions page. In the Detailed format, both dates are included in the CSV for reference.
 
 ## Configuration
 
@@ -114,7 +154,7 @@ It also loads on (but may not fully function):
 
 - `activeTab`: To access the current Amazon page
 - `downloads`: To download the CSV file
-- `storage`: To persist user preferences (date filter settings)
+- `storage`: To persist user preferences (date filter settings and CSV format preference)
 - `host_permissions`: To access Amazon.com domains for fetching order detail pages
 
 ## File Structure

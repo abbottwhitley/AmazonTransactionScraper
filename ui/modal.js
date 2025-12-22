@@ -25,12 +25,26 @@
       }
 
       // Get current date filter settings
-      const settings = this.appState ? this.appState.getDateFilterSettings() : {
-        mode: 'current-month',
-        enabled: true,
-        startDate: new Date(new Date().getFullYear(), new Date().getMonth(), 1),
-        endDate: new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)
-      };
+      let settings = this.appState ? this.appState.getDateFilterSettings() : null;
+      
+      // If no settings or invalid dates, use defaults
+      if (!settings || !settings.startDate || !settings.endDate || 
+          isNaN(settings.startDate.getTime()) || isNaN(settings.endDate.getTime())) {
+        const now = new Date();
+        settings = {
+          mode: 'current-month',
+          enabled: true,
+          startDate: new Date(now.getFullYear(), now.getMonth(), 1),
+          endDate: new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+        };
+      }
+      
+      // Get CSV format preference from appState
+      if (this.appState && !settings.csvFormat) {
+        settings.csvFormat = this.appState.getCSVFormat();
+      } else if (!settings.csvFormat) {
+        settings.csvFormat = 'simplifi'; // Default
+      }
 
       // Create modal overlay
       const overlay = document.createElement('div');
@@ -56,6 +70,11 @@
       const formatDate = this.dateUtils ? this.dateUtils.formatDateForInput : (date) => {
         if (!date) return '';
         const d = new Date(date);
+        // Check if date is valid
+        if (isNaN(d.getTime())) {
+          return '';
+        }
+        // Use local date components to avoid timezone issues
         const year = d.getFullYear();
         const month = String(d.getMonth() + 1).padStart(2, '0');
         const day = String(d.getDate()).padStart(2, '0');
@@ -122,6 +141,24 @@
           </div>
         </div>
 
+        <div class="form-group" style="margin-top: 16px;">
+          <label>CSV Format:</label>
+          <div style="margin-top: 8px;">
+            <div style="margin-bottom: 8px;">
+              <input type="radio" id="csv-format-simplifi" name="csv-format" value="simplifi" ${(settings.csvFormat || 'simplifi') === 'simplifi' ? 'checked' : ''}>
+              <label for="csv-format-simplifi" style="margin-left: 8px; font-weight: normal; cursor: pointer;">
+                Simplifi Format (Budgeting App)
+              </label>
+            </div>
+            <div>
+              <input type="radio" id="csv-format-detailed" name="csv-format" value="detailed" ${settings.csvFormat === 'detailed' ? 'checked' : ''}>
+              <label for="csv-format-detailed" style="margin-left: 8px; font-weight: normal; cursor: pointer;">
+                Detailed Format (All Fields)
+              </label>
+            </div>
+          </div>
+        </div>
+
         <div class="button-group">
           <button class="btn-cancel" id="cancel-export">Cancel</button>
           <button class="btn-export" id="confirm-export">Export</button>
@@ -145,6 +182,18 @@
      * @param {Function} formatDate - Date formatting function
      */
     setupEventHandlers(onExport, onCancel, formatDate) {
+      // Helper to parse date string without timezone issues
+      const parseDateInput = (dateString) => {
+        if (!dateString) return null;
+        // Date string is in YYYY-MM-DD format
+        const parts = dateString.split('-');
+        if (parts.length !== 3) return null;
+        const year = parseInt(parts[0], 10);
+        const month = parseInt(parts[1], 10) - 1; // Convert to 0-indexed
+        const day = parseInt(parts[2], 10);
+        return new Date(year, month, day);
+      };
+      
       const exportModeRadios = document.querySelectorAll('input[name="export-mode"]');
       const customDateOptions = document.getElementById('custom-date-options');
       const quickMonth = document.getElementById('quick-month');
@@ -171,12 +220,47 @@
         const updateDates = () => {
           if (quickMonth.value && quickYear.value) {
             const year = parseInt(quickYear.value);
-            const month = parseInt(quickMonth.value);
-            const startDate = new Date(year, month - 1, 1);
+            const month = parseInt(quickMonth.value); // month is 1-indexed (1=Jan, 11=Nov, 12=Dec)
+            // Start date: first day of the selected month
+            const startDate = new Date(year, month - 1, 1); // month - 1 because JS months are 0-indexed
+            // End date: last day of the selected month
+            // new Date(year, month, 0) gives last day of (month-1) in 0-indexed
+            // For November (month=11, which is month-1=10 in 0-indexed):
+            // new Date(2025, 11, 0) = last day of month 10 (November) = Nov 30, 2025 ✓
             const endDate = new Date(year, month, 0, 23, 59, 59, 999);
+            
+            // Verify the calculation is correct
+            if (endDate.getMonth() !== (month - 1)) {
+              // If the end date's month doesn't match, recalculate
+              // This handles edge cases
+              const lastDay = new Date(year, month, 0).getDate();
+              const endDateCorrected = new Date(year, month - 1, lastDay, 23, 59, 59, 999);
+              if (this.logger) {
+                this.logger.warn(`Date calculation correction: ${endDate.toLocaleDateString()} → ${endDateCorrected.toLocaleDateString()}`);
+              }
+              // Use corrected date
+              const tempEnd = endDateCorrected;
+              endDate.setTime(tempEnd.getTime());
+            }
+            
+            // Validate the dates
+            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+              console.error('Invalid date calculation in Quick Select');
+              return;
+            }
+            
+            const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+            if (this.logger) {
+              this.logger.info(`📅 Quick select: Month=${month} (${monthNames[month - 1]}), Year=${year}`);
+              this.logger.info(`📅 Calculated dates: ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}`);
+            }
             
             startDateInput.value = formatDate(startDate);
             endDateInput.value = formatDate(endDate);
+            
+            if (this.logger) {
+              this.logger.info(`📅 Set input values: Start=${startDateInput.value}, End=${endDateInput.value}`);
+            }
           }
         };
 
@@ -191,6 +275,7 @@
 
       exportBtn.addEventListener('click', () => {
         const selectedMode = document.querySelector('input[name="export-mode"]:checked')?.value;
+        const selectedFormat = document.querySelector('input[name="csv-format"]:checked')?.value || 'simplifi';
         
         let mode = 'current-page';
         let enabled = false;
@@ -214,14 +299,36 @@
             return;
           }
 
-          startDate = new Date(startValue);
+          // Parse dates from input values (YYYY-MM-DD format)
+          // Use local date parsing to avoid timezone issues
+          startDate = parseDateInput(startValue);
+          endDate = parseDateInput(endValue);
+          
+          if (!startDate || !endDate) {
+            alert('Invalid date values. Please select valid dates.');
+            return;
+          }
+          
+          // Set time components explicitly
           startDate.setHours(0, 0, 0, 0);
-          endDate = new Date(endValue);
           endDate.setHours(23, 59, 59, 999);
+          
+          // Validate dates
+          if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) {
+            alert('Invalid date values. Please select valid dates.');
+            return;
+          }
 
           if (startDate > endDate) {
             alert('Start date must be before or equal to end date.');
             return;
+          }
+          
+          // Log the dates being set
+          if (this.logger) {
+            this.logger.info(`📅 Modal: Setting date range from input values:`);
+            this.logger.info(`   Start input: ${startValue} → ${startDate.toLocaleDateString()}`);
+            this.logger.info(`   End input: ${endValue} → ${endDate.toLocaleDateString()}`);
           }
         } else {
           mode = 'current-page';
@@ -232,12 +339,19 @@
           mode: mode,
           enabled: enabled,
           startDate: startDate,
-          endDate: endDate
+          endDate: endDate,
+          csvFormat: selectedFormat
         };
+        
+        // Log final settings
+        if (this.logger && startDate && endDate) {
+          this.logger.info(`📅 Modal: Final settings - ${startDate.toLocaleDateString()} to ${endDate.toLocaleDateString()}, Format: ${selectedFormat}`);
+        }
 
         // Update app state if available
         if (this.appState) {
           this.appState.setDateFilterSettings(newSettings);
+          this.appState.setCSVFormat(selectedFormat);
         }
 
         this.close();

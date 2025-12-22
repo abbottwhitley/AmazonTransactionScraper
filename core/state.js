@@ -9,6 +9,7 @@
     constructor() {
       this.observers = [];
       this.dateFilterSettings = null;
+      this.csvFormat = 'simplifi'; // Default format
       this.isExporting = false;
       this.currentProgress = { current: 0, total: 0 };
       this.initialized = false;
@@ -24,7 +25,7 @@
       try {
         // Try to load from Chrome storage
         if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
-          const result = await chrome.storage.local.get('dateFilterSettings');
+          const result = await chrome.storage.local.get(['dateFilterSettings', 'csvFormat']);
           if (result.dateFilterSettings) {
             this.dateFilterSettings = result.dateFilterSettings;
             // Convert date strings back to Date objects
@@ -34,6 +35,9 @@
             if (this.dateFilterSettings.endDate) {
               this.dateFilterSettings.endDate = new Date(this.dateFilterSettings.endDate);
             }
+          }
+          if (result.csvFormat) {
+            this.csvFormat = result.csvFormat;
           }
         }
       } catch (error) {
@@ -69,6 +73,10 @@
      */
     async setDateFilterSettings(settings) {
       this.dateFilterSettings = { ...settings };
+      // Extract csvFormat if present in settings
+      if (settings.csvFormat) {
+        this.csvFormat = settings.csvFormat;
+      }
       this.notify('dateFilterSettings', settings);
       
       // Persist to Chrome storage
@@ -81,6 +89,35 @@
           window.AmazonExporterLogger.warn('Failed to save state to storage:', error);
         }
       }
+    }
+
+    /**
+     * Sets CSV format preference and persists to storage
+     * @param {string} format - CSV format: 'simplifi' or 'detailed'
+     * @returns {Promise<void>}
+     */
+    async setCSVFormat(format) {
+      this.csvFormat = format;
+      this.notify('csvFormat', format);
+      
+      // Persist to Chrome storage
+      try {
+        if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+          await chrome.storage.local.set({ csvFormat: format });
+        }
+      } catch (error) {
+        if (window.AmazonExporterLogger) {
+          window.AmazonExporterLogger.warn('Failed to save CSV format to storage:', error);
+        }
+      }
+    }
+
+    /**
+     * Gets CSV format preference
+     * @returns {string} CSV format: 'simplifi' or 'detailed'
+     */
+    getCSVFormat() {
+      return this.csvFormat || 'simplifi';
     }
 
     /**

@@ -270,12 +270,32 @@
     if (modal) {
       modal.show(
         (settings) => {
-          // On export confirmed
+          // On export confirmed - update all state sources to keep them in sync
+          logger.info(`📥 Modal callback received settings:`);
+          logger.info(`   Mode: ${settings.mode}`);
+          logger.info(`   Enabled: ${settings.enabled}`);
+          logger.info(`   Start: ${settings.startDate ? settings.startDate.toLocaleDateString() : 'null'}`);
+          logger.info(`   End: ${settings.endDate ? settings.endDate.toLocaleDateString() : 'null'}`);
+          
           if (appState) {
             appState.setDateFilterSettings(settings);
-          } else if (dateFilter) {
-            dateFilter.updateSettings(settings);
+            // Verify what was set
+            const verifySettings = appState.getDateFilterSettings();
+            logger.info(`📥 AppState settings after update:`);
+            logger.info(`   Start: ${verifySettings.startDate ? verifySettings.startDate.toLocaleDateString() : 'null'}`);
+            logger.info(`   End: ${verifySettings.endDate ? verifySettings.endDate.toLocaleDateString() : 'null'}`);
           }
+          // Always update dateFilter if it exists (not just when appState doesn't exist)
+          // This ensures filterOrdersByDateRange() uses the correct settings
+          if (dateFilter) {
+            dateFilter.updateSettings(settings);
+            // Verify what was set
+            const verifySettings = dateFilter.getSettings();
+            logger.info(`📥 DateFilter settings after update:`);
+            logger.info(`   Start: ${verifySettings.startDate ? verifySettings.startDate.toLocaleDateString() : 'null'}`);
+            logger.info(`   End: ${verifySettings.endDate ? verifySettings.endDate.toLocaleDateString() : 'null'}`);
+          }
+          // Update fallback variable
           dateFilterSettings = settings;
           exportToCSV();
         },
@@ -427,11 +447,15 @@
 
       const newSettings = { mode, enabled, startDate, endDate };
       
+      // Update all state sources to keep them in sync
       if (appState) {
         appState.setDateFilterSettings(newSettings);
-      } else if (dateFilter) {
+      }
+      // Always update dateFilter if it exists (not just when appState doesn't exist)
+      if (dateFilter) {
         dateFilter.updateSettings(newSettings);
       }
+      // Update fallback variable
       dateFilterSettings = newSettings;
 
       closeExportModal();
@@ -584,46 +608,125 @@
 
   async function collectAllOrderLinks() {
     const allOrderLinks = [];
-    let pageCount = 0;
+    let pageCount = 1; // Start at 1 since we're collecting from the current page
     const settings = appState ? appState.getDateFilterSettings() : 
                      (dateFilter ? dateFilter.getSettings() : dateFilterSettings);
+    
+    if (logger) {
+      logger.info(`📦 collectAllOrderLinks() called`);
+      logger.info(`   Settings: ${settings ? 'found' : 'not found'}`);
+      if (settings) {
+        logger.info(`   Enabled: ${settings.enabled}`);
+        logger.info(`   StartDate: ${settings.startDate ? settings.startDate.toLocaleDateString() : 'null'}`);
+        logger.info(`   EndDate: ${settings.endDate ? settings.endDate.toLocaleDateString() : 'null'}`);
+      }
+    }
     
     if (settings && settings.enabled && settings.startDate && settings.endDate) {
       const CONST = window.CONFIG || window.CONSTANTS || {};
       const maxPages = CONST.MAX_PAGES_TO_COLLECT || 50;
       let passedEndDate = false;
+      
+      if (logger) {
+        logger.info(`🔍 Starting collection with date range: ${settings.startDate.toLocaleDateString()} to ${settings.endDate.toLocaleDateString()}`);
+        logger.info(`🔍 Will stop when dates are before ${settings.startDate.toLocaleDateString()}`);
+        logger.info(`🔍 Max pages to collect: ${maxPages}`);
+      }
 
-      while (pageCount < maxPages && !passedEndDate) {
+      while (pageCount <= maxPages && !passedEndDate) {
+        if (logger) {
+          logger.info(`\n📄 === COLLECTING FROM PAGE ${pageCount} ===`);
+        }
+        
         const pageOrderLinks = extractOrderLinks();
-        logger.debug(`Collection Page ${pageCount + 1}: Found ${pageOrderLinks.length} order links`);
+        if (logger) {
+          logger.info(`📋 Page ${pageCount}: Found ${pageOrderLinks.length} order links`);
+        }
         
         allOrderLinks.push(...pageOrderLinks);
         
         const dates = extractTransactionDates();
         const hasTargetDate = dates.some(d => isDateInTargetRange(d));
-        const hasPassedEnd = dates.every(d => !shouldContinueCollecting(d));
         
-        if (hasPassedEnd && !hasTargetDate) {
-          logger.info('Passed end date, stopping page collection');
+        // Check if we've gone too far back (before start date)
+        // We should stop when ALL dates on the page are before the start date
+        const hasPassedStart = dates.length > 0 && dates.every(d => hasPassedTargetMonth(d));
+        
+        // Also check if we've passed the end date (for forward pagination scenarios)
+        // BUT: Don't stop if we're on the first page and all dates are after end date
+        // This is because we might need to paginate BACKWARDS to find older dates
+        const hasPassedEnd = dates.length > 0 && dates.every(d => !shouldContinueCollecting(d));
+        
+        if (logger) {
+          logger.info(`📅 Page ${pageCount} date analysis:`);
+          logger.info(`   - Dates found on page: ${dates.length}`);
+          if (dates.length > 0) {
+            const dateStrs = dates.map(d => `${d.date.toLocaleDateString()}`).join(', ');
+            logger.info(`   - Dates on page: ${dateStrs}`);
+          }
+          logger.info(`   - Has target date (in range): ${hasTargetDate}`);
+          logger.info(`   - Has passed start (all before ${settings.startDate.toLocaleDateString()}): ${hasPassedStart}`);
+          logger.info(`   - Has passed end (all after ${settings.endDate.toLocaleDateString()}): ${hasPassedEnd}`);
+        }
+        
+        // Stop if we've gone too far back (all dates are before start date)
+        // This is the correct stopping condition: stop when we find October dates while looking for November
+        if (hasPassedStart) {
+          logger.info(`🛑 STOPPING: All dates on page ${pageCount} are before start date (${settings.startDate.toLocaleDateString()})`);
           passedEndDate = true;
           break;
         }
-
-        const clicked = await clickNextPage();
-        if (!clicked) {
-          logger.info('No more pages available');
+        
+        // IMPORTANT: Don't stop if we've passed end date on the FIRST page
+        // We need to continue paginating backwards to find dates in range
+        // Only stop if we've passed end date AND we've already collected some target dates AND we're not on page 1
+        if (hasPassedEnd && !hasTargetDate && pageCount > 1) {
+          logger.info(`🛑 STOPPING: All dates on page ${pageCount} are after end date (${settings.endDate.toLocaleDateString()}) and no target dates found`);
+          passedEndDate = true;
           break;
         }
+        
+        if (hasPassedEnd && !hasTargetDate && pageCount === 1) {
+          logger.info(`⚠️ Page 1 has all dates after end date, but continuing to paginate backwards to find dates in range...`);
+        }
 
+        // Try to go to next page
+        if (logger) {
+          logger.info(`➡️ Attempting to click Next Page button...`);
+        }
+        const clicked = await clickNextPage();
+        if (!clicked) {
+          logger.info(`🛑 No more pages available - reached end of pagination at page ${pageCount}`);
+          break;
+        }
+        
+        if (logger) {
+          logger.info(`✅ Successfully clicked Next Page, waiting for page to load...`);
+        }
+
+        // Wait a bit for the page to load before collecting from next page
+        const delay = CONST.PAGE_LOAD_DELAY_MS || 2000;
+        await sleep(delay);
+        if (logger) {
+          logger.info(`⏳ Waited ${delay}ms, moving to next page...`);
+        }
         pageCount++;
       }
+      
+      if (logger) {
+        logger.info(`\n✅ Collection complete: ${allOrderLinks.length} total links from ${pageCount} page(s)`);
+      }
     } else {
+      // No date filtering - just collect from current page
+      if (logger) {
+        logger.info(`📋 No date filtering enabled, collecting from current page only`);
+      }
       const pageOrderLinks = extractOrderLinks();
       allOrderLinks.push(...pageOrderLinks);
       pageCount = 1;
     }
 
-    logger.info(`Collected ${allOrderLinks.length} total order links from ${pageCount} page(s)`);
+    logger.info(`📊 Collected ${allOrderLinks.length} total order links from ${pageCount} page(s)`);
     return allOrderLinks;
   }
 
@@ -676,7 +779,7 @@
       return;
     }
 
-    const progress = ProgressIndicator ? new ProgressIndicator(buttonElement) : null;
+    const progress = ProgressIndicator ? new ProgressIndicator(buttonElement, button) : null;
 
     try {
       if (progress) {
@@ -688,8 +791,27 @@
       }
 
       // Step 1: Navigate to target date range if needed
-      const settings = appState ? appState.getDateFilterSettings() : 
-                       (dateFilter ? dateFilter.getSettings() : dateFilterSettings);
+      let settings = appState ? appState.getDateFilterSettings() : 
+                     (dateFilter ? dateFilter.getSettings() : dateFilterSettings);
+      
+      // Ensure settings object exists and has csvFormat
+      if (!settings) {
+        settings = {};
+      }
+      if (!settings.csvFormat && appState) {
+        settings.csvFormat = appState.getCSVFormat();
+      } else if (!settings.csvFormat) {
+        settings.csvFormat = 'simplifi'; // Default
+      }
+      
+      // Log the settings being used
+      if (settings) {
+        const startDateStr = settings.startDate ? settings.startDate.toLocaleDateString() : 'N/A';
+        const endDateStr = settings.endDate ? settings.endDate.toLocaleDateString() : 'N/A';
+        logger.info(`🚀 Export Settings: Mode=${settings.mode}, Enabled=${settings.enabled}`);
+        logger.info(`🚀 Target Date Range: ${startDateStr} to ${endDateStr}`);
+      }
+      
       if (settings && settings.enabled && settings.startDate) {
         const startDateStr = settings.startDate.toLocaleDateString();
         if (progress) {
@@ -734,6 +856,8 @@
 
       // Step 3: Filter orders by date range and test mode
       const ordersToProcess = filterOrdersByDateRange(allOrderLinks);
+      
+      logger.info(`📋 After filtering: ${ordersToProcess.length} orders to process`);
 
       if (ordersToProcess.length === 0) {
         let errorMessage = 'Could not find any orders to process. ';
@@ -755,11 +879,27 @@
       }
 
       // Step 4: Fetch order details (using Repository pattern)
+      logger.info(`🔄 Starting to fetch order details for ${ordersToProcess.length} orders...`);
+      
+      // Ensure button is disabled and shows initial status
+      buttonElement.disabled = true;
+      if (progress) {
+        progress.setMessage(`🔄 Fetching ${ordersToProcess.length} orders...`);
+        progress.setExporting(true);
+      } else if (button) {
+        button.updateText({ isExporting: true, progress: { current: 0, total: ordersToProcess.length } });
+        button.setDisabled(true);
+      } else {
+        buttonElement.textContent = `🔄 Fetching 0/${ordersToProcess.length} orders...`;
+      }
+      
       let orderDetails = [];
       if (orderRepository) {
+        logger.info(`✅ Using OrderRepository to fetch order details`);
         orderDetails = await orderRepository.fetchMultipleOrders(
           ordersToProcess,
           (current, total) => {
+            logger.info(`📊 Progress: ${current}/${total} orders fetched`);
             if (progress) {
               progress.update(current, total);
             } else if (button) {
@@ -769,7 +909,9 @@
             }
           }
         );
+        logger.info(`✅ Fetched ${orderDetails.length} order details`);
       } else {
+        logger.warn(`⚠️ OrderRepository not available, using fallback`);
         // Fallback implementation - fetch orders directly
         const delayMs = CONFIG.TEST_MODE ? CONFIG.TEST_MODE_DELAY_MS : CONFIG.PRODUCTION_DELAY_MS;
         if (progress) {
@@ -844,21 +986,47 @@
       }
 
       // Step 5: Convert to CSV and download (using CSVExporter)
-      const filename = CONFIG.TEST_MODE 
-        ? `amazon_orders_TEST_${getDateString()}.csv`
-        : `amazon_orders_${getDateString()}.csv`;
+      logger.info(`📄 Converting ${orderDetails.length} orders to CSV...`);
+      
+      // Get CSV format from settings
+      const csvFormat = settings?.csvFormat || (appState ? appState.getCSVFormat() : 'simplifi');
+      logger.info(`📄 Using CSV format: ${csvFormat}`);
+      
+      // Update status to show CSV generation
+      if (progress) {
+        progress.setMessage(`📄 Generating CSV file (${csvFormat} format)...`);
+      } else if (button) {
+        button.updateText({ customText: `📄 Generating CSV file (${csvFormat} format)...` });
+      } else {
+        buttonElement.textContent = `📄 Generating CSV file (${csvFormat} format)...`;
+      }
+      
+      const formatSuffix = csvFormat === 'simplifi' ? 'simplifi' : 'detailed';
+      const filename = CONFIG.TEST_MODE
+        ? `amazon_orders_TEST_${formatSuffix}_${getDateString()}.csv`
+        : `amazon_orders_${formatSuffix}_${getDateString()}.csv`;
 
       if (CSVExporter) {
-        CSVExporter.export(orderDetails, filename);
+        logger.info(`✅ Using CSVExporter to export CSV: ${filename} (format: ${csvFormat})`);
+        CSVExporter.export(orderDetails, filename, csvFormat);
+        logger.info(`✅ CSV export completed: ${filename}`);
       } else {
+        logger.warn(`⚠️ CSVExporter not available, using fallback`);
         // Fallback
         const csvContent = convertToCSV(orderDetails);
         downloadCSV(csvContent, filename);
+        logger.info(`✅ CSV download completed (fallback): ${filename}`);
       }
 
       // Step 6: Show success message
       if (progress) {
         progress.showSuccess(`✅ Exported ${orderDetails.length} orders!`);
+      } else if (button) {
+        button.updateText({ customText: `✅ Exported ${orderDetails.length} orders!` });
+        setTimeout(() => {
+          button.reset();
+          button.setDisabled(false);
+        }, 3000);
       } else {
         buttonElement.textContent = `✅ Exported ${orderDetails.length} orders!`;
         setTimeout(() => {

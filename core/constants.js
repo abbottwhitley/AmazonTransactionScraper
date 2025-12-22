@@ -47,12 +47,19 @@
         'a[href*="/gp/your-account/order-details"]',
         'a[href*="/your-account/order-details"]',
         'a[href*="order-details"]',
-        'a[href*="/gp/css/summary/print"]'
+        'a[href*="/gp/css/summary/print"]',
+        'a[href*="/gp/order-details"]',
+        'a[href*="orderID"]',
+        'a[href*="orderId"]'
       ],
       dateHeaders: [
         '[class*="transaction-date"]',
+        '[data-pmts-component-id*="transaction-date"]',
         '[data-pmts-component-id*="transaction-date"] span',
-        'span[class*="date"]'
+        'span[class*="date"]',
+        'h2[class*="date"]',
+        'div[class*="date-header"]',
+        'div[class*="DateHeader"]'
       ],
       nextPageButton: [
         'input[name*="NextPage"]',

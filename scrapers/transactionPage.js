@@ -33,12 +33,28 @@
       const CONST = this.config;
       const dateSelectors = CONST.TRANSACTION_PAGE?.dateHeaders || [
         '[class*="transaction-date"]',
+        '[data-pmts-component-id*="transaction-date"]',
         '[data-pmts-component-id*="transaction-date"] span',
-        'span[class*="date"]'
+        'span[class*="date"]',
+        'h2[class*="date"]',
+        'div[class*="date-header"]',
+        'div[class*="DateHeader"]'
       ];
       
       const findAllElements = CONST.findAllElementsWithFallbacks || 
-        ((selectors) => Array.from(document.querySelectorAll(selectors.join(', '))));
+        ((selectors) => {
+          const results = [];
+          selectors.forEach(selector => {
+            try {
+              const elements = Array.from(document.querySelectorAll(selector));
+              results.push(...elements);
+            } catch (e) {
+              // Invalid selector, skip
+            }
+          });
+          return results;
+        });
+      
       const dateElements = findAllElements(dateSelectors);
       const dates = [];
       
@@ -52,17 +68,22 @@
         }
       });
       
-      // Also try to find dates in the page text
+      // Also try to find dates in the page text (more aggressive search)
       const datePattern = CONST.DATE_PATTERN || 
         /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/gi;
       const pageText = document.body.textContent || '';
       let match;
+      const foundDates = new Set(); // Use Set to track unique date strings
       while ((match = datePattern.exec(pageText)) !== null) {
+        const dateString = match[0];
+        if (foundDates.has(dateString)) continue; // Skip duplicates
+        foundDates.add(dateString);
+        
         const parsed = this.dateUtils ? 
-          this.dateUtils.parseDateFromTransaction(match[0]) :
-          this._parseDateFromTransaction(match[0]);
+          this.dateUtils.parseDateFromTransaction(dateString) :
+          this._parseDateFromTransaction(dateString);
         if (parsed) {
-          // Avoid duplicates
+          // Avoid duplicates by checking date values
           const isDuplicate = dates.some(d => 
             d.year === parsed.year && d.month === parsed.month && 
             d.date.getDate() === parsed.date.getDate()
@@ -71,6 +92,10 @@
             dates.push(parsed);
           }
         }
+      }
+      
+      if (this.logger) {
+        this.logger.debug(`Extracted ${dates.length} unique transaction dates from page`);
       }
       
       return dates;
@@ -120,7 +145,10 @@
       dateHeaders.sort((a, b) => a.position - b.position);
       
       if (this.logger) {
-        this.logger.debug(`Found ${dateHeaders.length} date headers on page`);
+        this.logger.info(`📅 Found ${dateHeaders.length} date headers on page:`);
+        dateHeaders.forEach((header, idx) => {
+          this.logger.info(`   ${idx + 1}. ${header.date.toLocaleDateString()} (position: ${header.position})`);
+        });
       }
 
       // Extract order links
@@ -154,6 +182,10 @@
             
             if (!orderLinkMap.has(orderId)) {
               const transactionDate = this._findTransactionDateForElement(link, dateHeaders);
+              if (this.logger) {
+                const dateStr = transactionDate ? transactionDate.toLocaleDateString() : 'NO DATE';
+                this.logger.debug(`📦 Found order ${orderId} with transaction date: ${dateStr}`);
+              }
               orderLinkMap.set(orderId, {
                 orderId: orderId,
                 url: fullUrl,
@@ -165,9 +197,11 @@
         });
       });
 
-      // Also search for order numbers in page text
+      // Also search for order numbers in page text (more aggressive search)
       const orderPattern = CONST.ORDER_ID_PATTERN_WITH_REFUND || 
         /(?:Refund:)?\s*Order\s*#?\s*([\d-]+)/gi;
+      
+      // Search in all text nodes
       const walker = document.createTreeWalker(
         document.body,
         NodeFilter.SHOW_TEXT,
@@ -186,17 +220,31 @@
             let searchElement = node.parentElement;
             let foundLink = null;
             
-            for (let i = 0; i < 5 && searchElement && searchElement !== document.body; i++) {
+            // Search up the DOM tree and in siblings for links
+            for (let i = 0; i < 10 && searchElement && searchElement !== document.body; i++) {
+              // Check if this element is a link
               if (searchElement.tagName === 'A' && searchElement.href) {
                 foundLink = searchElement;
                 break;
               }
               
+              // Check siblings for links
               const siblings = Array.from(searchElement.parentElement?.children || []);
               for (const sibling of siblings) {
                 if (sibling.tagName === 'A' && sibling.href && 
-                    (sibling.href.includes('order') || sibling.textContent.includes(orderId))) {
+                    (sibling.href.includes('order') || sibling.href.includes(orderId) || 
+                     sibling.textContent.includes(orderId))) {
                   foundLink = sibling;
+                  break;
+                }
+              }
+              
+              // Check children for links
+              const childLinks = searchElement.querySelectorAll('a[href]');
+              for (const childLink of childLinks) {
+                if (childLink.href.includes('order') || childLink.href.includes(orderId) ||
+                    childLink.textContent.includes(orderId)) {
+                  foundLink = childLink;
                   break;
                 }
               }
@@ -205,10 +253,20 @@
               searchElement = searchElement.parentElement;
             }
             
+            // Find transaction date for this order
+            const transactionDate = this._findTransactionDateForElement(
+              foundLink || node, 
+              dateHeaders
+            );
+            
+            if (this.logger) {
+              const dateStr = transactionDate ? transactionDate.toLocaleDateString() : 'NO DATE';
+              this.logger.debug(`📦 Found order ${orderId} (text-based) with transaction date: ${dateStr}`);
+            }
+            
             if (foundLink && foundLink.href) {
               const fullUrl = foundLink.href.startsWith('http') ? foundLink.href : 
                 new URL(foundLink.href, window.location.origin).href;
-              const transactionDate = this._findTransactionDateForElement(foundLink, dateHeaders);
               orderLinkMap.set(orderId, {
                 orderId: orderId,
                 url: fullUrl,
@@ -216,8 +274,8 @@
                 transactionDate: transactionDate
               });
             } else {
+              // Construct URL from order ID
               const constructedUrl = `https://www.amazon.com/gp/your-account/order-details/ref=oh_aui_detailpage_o00_s00?ie=UTF8&orderID=${orderId}`;
-              const transactionDate = this._findTransactionDateForElement(node, dateHeaders);
               orderLinkMap.set(orderId, {
                 orderId: orderId,
                 url: constructedUrl,
@@ -230,7 +288,28 @@
       }
 
       if (this.logger) {
-        this.logger.info(`Extracted ${orderLinkMap.size} unique order links`);
+        this.logger.info(`📦 Extracted ${orderLinkMap.size} unique order links`);
+        
+        // Log summary of dates found
+        const ordersByDate = new Map();
+        orderLinkMap.forEach((link, orderId) => {
+          if (link.transactionDate) {
+            const dateKey = link.transactionDate.toLocaleDateString();
+            if (!ordersByDate.has(dateKey)) {
+              ordersByDate.set(dateKey, []);
+            }
+            ordersByDate.get(dateKey).push(orderId);
+          }
+        });
+        
+        if (ordersByDate.size > 0) {
+          this.logger.info(`📊 Orders grouped by transaction date:`);
+          Array.from(ordersByDate.entries()).sort().forEach(([date, orderIds]) => {
+            this.logger.info(`   ${date}: ${orderIds.length} order(s) - ${orderIds.slice(0, 3).join(', ')}${orderIds.length > 3 ? '...' : ''}`);
+          });
+        } else {
+          this.logger.warn(`⚠️ No transaction dates found for any orders!`);
+        }
       }
 
       return Array.from(orderLinkMap.values());
@@ -280,14 +359,35 @@
      * @private
      */
     _findTransactionDateForElement(element, dateHeaders) {
-      if (!dateHeaders || dateHeaders.length === 0) return null;
+      if (!dateHeaders || dateHeaders.length === 0) {
+        if (this.logger) {
+          this.logger.debug(`   No date headers available for date lookup`);
+        }
+        return null;
+      }
       const elementPosition = this._getElementPosition(element);
+      
+      // Find the most recent date header that appears before this element
+      let foundDate = null;
       for (let i = dateHeaders.length - 1; i >= 0; i--) {
         if (dateHeaders[i].position < elementPosition) {
-          return dateHeaders[i].date;
+          foundDate = dateHeaders[i].date;
+          if (this.logger) {
+            this.logger.debug(`   Found date ${foundDate.toLocaleDateString()} at position ${dateHeaders[i].position} (element at ${elementPosition})`);
+          }
+          break;
         }
       }
-      return dateHeaders.length > 0 ? dateHeaders[0].date : null;
+      
+      // If no date found before element, use the first date (fallback)
+      if (!foundDate && dateHeaders.length > 0) {
+        foundDate = dateHeaders[0].date;
+        if (this.logger) {
+          this.logger.debug(`   Using first date header ${foundDate.toLocaleDateString()} as fallback`);
+        }
+      }
+      
+      return foundDate;
     }
   }
 

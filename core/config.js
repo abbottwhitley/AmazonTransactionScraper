@@ -7,8 +7,8 @@
    */
   window.CONFIG = {
     // Runtime Configuration
-    TEST_MODE: true,  // Set to true to enable test/debugging mode
-    TEST_MODE_MAX_ORDERS: 35,  // In test mode, only process this many orders
+    TEST_MODE: false,  // Set to true to enable test/debugging mode
+    TEST_MODE_MAX_ORDERS: 50,  // In test mode, only process this many orders
     TEST_MODE_DELAY_MS: 1000,  // Delay between requests in test mode (ms)
     PRODUCTION_DELAY_MS: 1000,  // Delay between requests in production mode (ms)
     LOG_LEVEL: 'INFO',  // Log level: 'DEBUG', 'INFO', 'WARN', 'ERROR'

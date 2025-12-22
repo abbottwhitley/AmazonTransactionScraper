@@ -122,39 +122,76 @@
      * @returns {Array} Filtered array of order links
      */
     filterOrdersByDateRange(orderLinks) {
+      const logger = window.AmazonExporterLogger;
+      
       if (!this.settings.enabled) {
+        if (logger) {
+          logger.info('Date filtering is disabled, returning all orders');
+        }
         return orderLinks;
+      }
+
+      // Log the filter settings being used
+      if (logger) {
+        const startDateStr = this.settings.startDate ? this.settings.startDate.toLocaleDateString() : 'N/A';
+        const endDateStr = this.settings.endDate ? this.settings.endDate.toLocaleDateString() : 'N/A';
+        logger.info(`🔍 Date Filter Settings: Mode=${this.settings.mode}, Enabled=${this.settings.enabled}`);
+        logger.info(`🔍 Date Range: ${startDateStr} to ${endDateStr}`);
       }
 
       // Check if we have any orders with transaction dates
       const ordersWithDates = orderLinks.filter(link => link.transactionDate).length;
       if (ordersWithDates === 0 && orderLinks.length > 0) {
-        if (window.AmazonExporterLogger) {
-          window.AmazonExporterLogger.warn('WARNING: Date filtering is enabled but no transaction dates were extracted for any orders.');
-          window.AmazonExporterLogger.warn('This might indicate an issue with date extraction. Proceeding without date filtering to avoid excluding all orders.');
+        if (logger) {
+          logger.warn('WARNING: Date filtering is enabled but no transaction dates were extracted for any orders.');
+          logger.warn('This might indicate an issue with date extraction. Proceeding without date filtering to avoid excluding all orders.');
         }
         return orderLinks;
       }
 
-      const filteredLinks = orderLinks.filter(orderLink => {
+      if (logger) {
+        logger.info(`📊 Filtering ${orderLinks.length} orders (${ordersWithDates} with dates, ${orderLinks.length - ordersWithDates} without dates)`);
+      }
+
+      const filteredLinks = [];
+      const excludedLinks = [];
+      
+      orderLinks.forEach(orderLink => {
         if (!orderLink.transactionDate) {
-          if (window.AmazonExporterLogger) {
-            window.AmazonExporterLogger.warn(`Order ${orderLink.orderId} has no transaction date extracted. Including order anyway.`);
+          if (logger) {
+            logger.warn(`⚠️ Order ${orderLink.orderId} has no transaction date extracted. Including order anyway.`);
           }
-          return true;
+          filteredLinks.push(orderLink);
+          return;
         }
         
+        const orderDateStr = orderLink.transactionDate.toLocaleDateString();
         const inRange = this.isDateInRange(orderLink.transactionDate);
-        if (inRange && window.AmazonExporterLogger) {
-          window.AmazonExporterLogger.debug(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is IN date range`);
-        } else if (window.AmazonExporterLogger) {
-          window.AmazonExporterLogger.debug(`Order ${orderLink.orderId} with date ${orderLink.transactionDate.toLocaleDateString()} is OUT of date range, filtering out`);
+        
+        if (inRange) {
+          if (logger) {
+            logger.info(`✅ Order ${orderLink.orderId} with date ${orderDateStr} is IN date range`);
+          }
+          filteredLinks.push(orderLink);
+        } else {
+          if (logger) {
+            logger.info(`❌ Order ${orderLink.orderId} with date ${orderDateStr} is OUT of date range, filtering out`);
+          }
+          excludedLinks.push({ orderId: orderLink.orderId, date: orderDateStr });
         }
-        return inRange;
       });
 
-      if (window.AmazonExporterLogger) {
-        window.AmazonExporterLogger.info(`Date filtering result: ${filteredLinks.length} of ${orderLinks.length} orders match the date range`);
+      if (logger) {
+        logger.info(`📊 Date filtering result: ${filteredLinks.length} of ${orderLinks.length} orders match the date range`);
+        if (excludedLinks.length > 0) {
+          logger.info(`📋 Excluded ${excludedLinks.length} orders outside date range:`);
+          excludedLinks.slice(0, 10).forEach(item => {
+            logger.info(`   - Order ${item.orderId}: ${item.date}`);
+          });
+          if (excludedLinks.length > 10) {
+            logger.info(`   ... and ${excludedLinks.length - 10} more`);
+          }
+        }
       }
 
       return filteredLinks;
