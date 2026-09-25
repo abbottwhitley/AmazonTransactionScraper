@@ -95,14 +95,20 @@ Comprehensive format with all available order information. Includes the followin
 - **Order Number**: Amazon order ID (e.g., "113-2409867-7588258")
 - **Transaction Date**: Date from the transactions page grouping (used for filtering)
 - **Order Placed Date**: Date when the order was placed (from order details page)
-- **Order Total**: Grand total amount (net amount after refunds)
+- **Grand Total**: Grand total amount from the order details page (before refunds)
+- **Order Total**: Net amount after refunds (grand total - refund amount)
 - **Refund Amount**: Refund amount if applicable (empty if no refund)
 - **Items**: Semicolon-separated list of product names
-- **Payment Method**: Payment method used (e.g., "Visa ending in 1234")
+- **Category**: Automatically categorized purchase category (e.g., "Groceries", "Baby Supplies", "Shopping")
+- **Payment Method**: Payment method used (e.g., "Prime Visa ending in 9291")
 - **Status**: Order status (e.g., "Delivered", "Shipped")
 - **Order URL**: Direct link to the order detail page
 
-**Note:** Your CSV format preference is saved and will be remembered for future exports.
+**Note:** Categories are automatically assigned based on item names using keyword matching. Items that don't match specific categories default to "Shopping". Categories can be customized by editing `data/categoryRules.js`.
+
+**Note:** 
+- Your CSV format preference is saved and will be remembered for future exports.
+- CSV files are automatically named using the date range of the export (e.g., `amazon_orders_detailed_2024-01-01_to_2024-01-31.csv`). For current page exports, today's date is used. For current month exports, the date range spans from the start of the month to today.
 
 ### Date Filtering
 
@@ -185,7 +191,8 @@ AmazonTransactionScraper/
 │   └── dateUtils.js           # Date parsing, normalization, comparison utilities
 ├── data/                      # Data modules
 │   ├── csvExporter.js         # CSV conversion & download
-│   └── orderModel.js          # Order data structure definitions
+│   ├── orderModel.js          # Order data structure definitions
+│   └── categoryRules.js       # Category classification rules and utilities
 └── tests/                     # Test framework and test suites
     ├── testFramework.js       # Simple test framework
     ├── dateFilterTests.js     # Date filter unit tests

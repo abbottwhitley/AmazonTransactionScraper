@@ -58,6 +58,54 @@
     }
 
     /**
+     * Formats a date as YYYY-MM-DD string
+     * @param {Date} date - The date to format
+     * @returns {string} Formatted date string in YYYY-MM-DD format
+     */
+    static formatDateForFilename(date) {
+      if (!date) return '';
+      const d = new Date(date);
+      const year = d.getFullYear();
+      const month = String(d.getMonth() + 1).padStart(2, '0');
+      const day = String(d.getDate()).padStart(2, '0');
+      return `${year}-${month}-${day}`;
+    }
+
+    /**
+     * Generates a date range string for filenames (YYYY-MM-DD_to_YYYY-MM-DD)
+     * @param {Object} settings - Date filter settings with mode, startDate, endDate
+     * @returns {string} Date range string for filename
+     */
+    static getDateRangeStringForFilename(settings) {
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      
+      let startDate, endDate;
+      
+      if (settings && settings.mode === 'current-page') {
+        // Current page mode: use today to today
+        startDate = today;
+        endDate = today;
+      } else if (settings && settings.mode === 'current-month') {
+        // Current month mode: start of month to today
+        startDate = settings.startDate || new Date(today.getFullYear(), today.getMonth(), 1);
+        endDate = today;
+      } else if (settings && settings.startDate && settings.endDate) {
+        // Custom date range mode: use provided dates
+        startDate = settings.startDate;
+        endDate = settings.endDate;
+      } else {
+        // Fallback: use today
+        startDate = today;
+        endDate = today;
+      }
+      
+      const startStr = this.formatDateForFilename(startDate);
+      const endStr = this.formatDateForFilename(endDate);
+      return `${startStr}_to_${endStr}`;
+    }
+
+    /**
      * Compares two dates (normalized) and returns comparison result
      * @param {Date} date1 - First date
      * @param {Date} date2 - Second date

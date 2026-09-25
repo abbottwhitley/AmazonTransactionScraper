@@ -28,6 +28,7 @@
         "filters/dateUtils.js",
         "core/errorHandling.js",
         "data/orderModel.js",
+        "data/categoryRules.js",
         "data/csvExporter.js",
         "ui/button.js",
         "ui/modal.js",

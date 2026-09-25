@@ -15,10 +15,12 @@
         orderUrl: '',
         transactionDate: '', // Date from transactions page grouping
         orderPlacedDate: '', // Date from order details page (when order was placed)
-        orderTotal: '',
+        grandTotal: '', // Grand total from order details page (before refunds)
+        orderTotal: '', // Net amount after refunds
         refundAmount: '',
         paymentMethod: '',
         items: [],
+        category: '', // Category based on item categorization
         status: ''
       };
     }

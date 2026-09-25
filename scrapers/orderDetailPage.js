@@ -251,10 +251,13 @@
         }
       }
 
-      // Calculate net amount
+      // Store grand total and calculate net amount
       if (foundGrandTotal && grandTotalValue > 0) {
+        orderDetails.grandTotal = '$' + grandTotalValue.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
         const netAmount = grandTotalValue - refundTotal;
         orderDetails.orderTotal = '$' + netAmount.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+      } else {
+        orderDetails.grandTotal = '';
       }
 
       // Extract items
@@ -365,19 +368,79 @@
 
       orderDetails.items = Array.from(itemContainers);
 
-      // Extract payment method
-      const paymentPatterns = CONST.PAYMENT_PATTERNS || [
-        /(?:Payment method|Paid with|Payment)[:\s]+([^\n<]+)/i,
-        /(?:Card ending|Card)[:\s]+([^\d\n<]+[\d]+)/i
+      // Extract payment method - try DOM selectors first for detailed extraction
+      let foundPaymentMethod = '';
+      
+      // Try DOM-based extraction using selectors
+      const paymentSelectors = CONST.ORDER_DETAIL_PAGE?.paymentMethod || [
+        '.pmts-payments-instrument-list li',
+        'ul.pmts-payments-instrument-list .a-list-item',
+        '.pmts-payment-credit-card-instrument-logo'
       ];
       
-      for (const pattern of paymentPatterns) {
-        const match = bodyText.match(pattern);
-        if (match) {
-          orderDetails.paymentMethod = match[1].trim();
-          break;
+      for (const selector of paymentSelectors) {
+        try {
+          const paymentElements = doc.querySelectorAll(selector);
+          if (paymentElements.length > 0) {
+            // Use the first payment element found
+            let paymentElement = paymentElements[0];
+            
+            // If we selected an image element, get its parent container for full text
+            if (paymentElement.tagName === 'IMG') {
+              // Look for parent li or span with class a-list-item
+              paymentElement = paymentElement.closest('li') || 
+                              paymentElement.closest('.a-list-item') ||
+                              paymentElement.parentElement;
+            }
+            
+            // Get the text content, which should include card type and "ending in XXXX"
+            let paymentText = paymentElement.textContent?.trim() || '';
+            
+            // Also check if there's an image with alt text (like "Mastercard", "Prime Visa", etc.)
+            const paymentImg = paymentElement.querySelector('img[alt]');
+            const cardTypeFromImg = paymentImg ? paymentImg.getAttribute('alt') : '';
+            
+            // If we have text content, use it (it should already include everything)
+            if (paymentText) {
+              foundPaymentMethod = paymentText;
+            } else if (cardTypeFromImg) {
+              // Fallback: if no text but we have image alt, use that
+              foundPaymentMethod = cardTypeFromImg;
+            }
+            
+            // Clean up the text - remove extra whitespace and normalize
+            if (foundPaymentMethod) {
+              foundPaymentMethod = foundPaymentMethod.replace(/\s+/g, ' ').trim();
+              
+              // If we found something meaningful, use it
+              if (foundPaymentMethod.length > 0) {
+                break;
+              }
+            }
+          }
+        } catch (e) {
+          // Continue to next selector if this one fails
+          continue;
         }
       }
+      
+      // Fall back to regex patterns if DOM extraction didn't work
+      if (!foundPaymentMethod) {
+        const paymentPatterns = CONST.PAYMENT_PATTERNS || [
+          /(?:Payment method|Paid with|Payment)[:\s]+([^\n<]+)/i,
+          /(?:Card ending|Card)[:\s]+([^\d\n<]+[\d]+)/i
+        ];
+        
+        for (const pattern of paymentPatterns) {
+          const match = bodyText.match(pattern);
+          if (match) {
+            foundPaymentMethod = match[1] ? match[1].trim() : match[0].trim();
+            break;
+          }
+        }
+      }
+      
+      orderDetails.paymentMethod = foundPaymentMethod || '';
 
       // Extract order status
       const statusKeywords = CONST.STATUS_KEYWORDS || 
@@ -432,7 +495,17 @@
       }
       
       orderDetails.status = foundStatus || '';
-      orderDetails.items = orderDetails.items.join('; ');
+      
+      // Categorize items before joining
+      const itemsString = orderDetails.items.join('; ');
+      const CategoryRules = window.AmazonExporterCategoryRules;
+      if (CategoryRules) {
+        orderDetails.category = CategoryRules.categorizeOrder(orderDetails.items);
+      } else {
+        orderDetails.category = 'Shopping'; // Default fallback
+      }
+      
+      orderDetails.items = itemsString;
 
       return orderDetails;
     }

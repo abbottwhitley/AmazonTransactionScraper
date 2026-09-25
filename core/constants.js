@@ -134,6 +134,13 @@
         '[class*="status"]',
         '[data-testid*="status"]',
         '[id*="status"]'
+      ],
+      paymentMethod: [
+        '.pmts-payments-instrument-list li',
+        'ul.pmts-payments-instrument-list .a-list-item',
+        '.pmts-payment-credit-card-instrument-logo',
+        '[class*="payment"] [class*="instrument"]',
+        '[class*="payment-method"]'
       ]
     },
 

@@ -184,14 +184,16 @@
 
       if (isOrderDetails) {
         // New order details format
-        const headers = ['Order Number', 'Transaction Date', 'Order Placed Date', 'Order Total', 'Refund Amount', 'Items', 'Payment Method', 'Status', 'Order URL'];
+        const headers = ['Order Number', 'Transaction Date', 'Order Placed Date', 'Grand Total', 'Order Total', 'Refund Amount', 'Items', 'Category', 'Payment Method', 'Status', 'Order URL'];
         const rows = orders.map(t => [
           this.escapeCSV(t.orderNumber || ''),
           this.escapeCSV(t.transactionDate || ''), // Date from transactions page grouping
           this.escapeCSV(t.orderPlacedDate || ''), // Date from order details page
+          this.escapeCSV(t.grandTotal || ''),
           this.escapeCSV(t.orderTotal || ''),
           this.escapeCSV(t.refundAmount || ''),
           this.escapeCSV(t.items || ''),
+          this.escapeCSV(t.category || 'Shopping'),
           this.escapeCSV(t.paymentMethod || ''),
           this.escapeCSV(t.status || ''),
           this.escapeCSV(t.orderUrl || '')

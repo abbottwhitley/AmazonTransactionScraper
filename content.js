@@ -1002,9 +1002,11 @@
       }
       
       const formatSuffix = csvFormat === 'simplifi' ? 'simplifi' : 'detailed';
+      // Generate date range string for filename
+      const dateRangeStr = dateUtils ? dateUtils.getDateRangeStringForFilename(settings) : getDateString();
       const filename = CONFIG.TEST_MODE
-        ? `amazon_orders_TEST_${formatSuffix}_${getDateString()}.csv`
-        : `amazon_orders_${formatSuffix}_${getDateString()}.csv`;
+        ? `amazon_orders_TEST_${formatSuffix}_${dateRangeStr}.csv`
+        : `amazon_orders_${formatSuffix}_${dateRangeStr}.csv`;
 
       if (CSVExporter) {
         logger.info(`✅ Using CSVExporter to export CSV: ${filename} (format: ${csvFormat})`);
