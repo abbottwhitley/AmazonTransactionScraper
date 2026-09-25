@@ -2,6 +2,10 @@
 
 A Chrome extension that scrapes Amazon transaction pages and exports detailed order information to CSV. The extension extracts order links from the transactions page, navigates to each order detail page, and collects comprehensive order data.
 
+**Want this to run without clicking through it yourself?** See
+[`automation/README.md`](automation/README.md) -- a Playwright script that
+drives this same extension, unmodified, inside a real browser.
+
 ## Installation
 
 1. Download or clone this repository

@@ -1,0 +1,13 @@
+{
+  "name": "amazon-transaction-scraper-automation",
+  "version": "1.0.0",
+  "description": "Playwright automation that drives the existing Chrome extension (unmodified) to produce a transaction export without a human clicking through it.",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "export": "node run-export.mjs"
+  },
+  "dependencies": {
+    "playwright": "^1.48.0"
+  }
+}
