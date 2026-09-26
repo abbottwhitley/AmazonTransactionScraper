@@ -111,7 +111,7 @@
       // Real Amazon order IDs are XXX-XXXXXXX-XXXXXXX, but the first group
       // isn't always 3 digits -- digital/subscription orders (Audible,
       // Kindle, etc.) use a letter-prefixed group instead (e.g.
-      // "D01-4098072-8253053"). Regression found 2026-09-26: an earlier,
+      // "D01-1234567-7654321"). Regression found 2026-09-26: an earlier,
       // narrower \d{3}-only version of this pattern silently rejected every
       // one of those as "bogus", which is why exports were missing most
       // digital-order months. Both extraction paths below guard against
@@ -120,6 +120,9 @@
       // otherwise match almost anything downstream -- without assuming the
       // prefix is always 3 digits.
       const AMAZON_ORDER_ID_PATTERN = CONST.AMAZON_ORDER_ID_PATTERN || /^[A-Za-z0-9]{2,4}-\d{7}-\d{7}$/;
+      // Candidate IDs that failed validation, logged at the end -- a silent
+      // rejection here is exactly how the 2026-09-26 regressions hid.
+      const rejectedCandidates = new Set();
       const dateHeaders = [];
       const datePattern = CONST.DATE_PATTERN ? new RegExp(CONST.DATE_PATTERN.source, 'i') : 
         /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i;
@@ -184,24 +187,26 @@
           const href = link.getAttribute('href');
           const text = link.textContent || '';
           
-          // Extract order ID
-          const orderIdPattern = CONST.ORDER_ID_PATTERN || /Order\s*#?\s*([\d-]+)/i;
-          let orderMatch = text.match(orderIdPattern);
-          if (!orderMatch && href) {
-            const urlPattern = CONST.ORDER_ID_URL_PATTERN || /order[_-]?id[=_]?([\d-]+)|[/-]([\d-]{10,})[/-]/i;
-            orderMatch = href.match(urlPattern);
-            if (orderMatch) {
-              orderMatch = [null, orderMatch[1] || orderMatch[2]];
-            }
-          }
-          
-          if (orderMatch && href) {
-            const orderId = orderMatch[1].trim();
+          // Extract order ID -- see constants.js's ORDER_ID_PATTERN comment
+          // for why the capture is bounded to the order-ID shape. Try the
+          // link text first, then the href; a text candidate that fails
+          // validation falls through to the href instead of dropping the link.
+          const orderIdPattern = CONST.ORDER_ID_PATTERN || /Order\s*#?\s*([A-Za-z0-9]{2,4}-\d{7}-\d{7})/i;
+          const urlPattern = CONST.ORDER_ID_URL_PATTERN || /order[_-]?id[=_]?([A-Za-z0-9]{2,4}-\d{7}-\d{7})|\/([A-Za-z0-9]{2,4}-\d{7}-\d{7})(?!\d)/i;
+          const candidates = [];
+          const textMatch = text.match(orderIdPattern);
+          if (textMatch) candidates.push(textMatch[1].trim());
+          const hrefMatch = href ? href.match(urlPattern) : null;
+          if (hrefMatch) candidates.push((hrefMatch[1] || hrefMatch[2]).trim());
+
+          if (candidates.length > 0 && href) {
             // Real Amazon order IDs are always XXX-XXXXXXX-XXXXXXX. Without
             // this, a stray "Order # -" style match elsewhere on the page
             // (a UI label, not a real order) can produce a bogus orderId
             // like "-" that then matches almost anything downstream.
-            if (!AMAZON_ORDER_ID_PATTERN.test(orderId)) {
+            const orderId = candidates.find(c => AMAZON_ORDER_ID_PATTERN.test(c));
+            if (!orderId) {
+              candidates.forEach(c => rejectedCandidates.add(c));
               return;
             }
             const fullUrl = href.startsWith('http') ? href : new URL(href, window.location.origin).href;
@@ -224,8 +229,8 @@
       });
 
       // Also search for order numbers in page text (more aggressive search)
-      const orderPattern = CONST.ORDER_ID_PATTERN_WITH_REFUND || 
-        /(?:Refund:)?\s*Order\s*#?\s*([\d-]+)/gi;
+      const orderPattern = CONST.ORDER_ID_PATTERN_WITH_REFUND ||
+        /(?:Refund:)?\s*Order\s*#?\s*([A-Za-z0-9]{2,4}-\d{7}-\d{7})/gi;
       
       // Search in all text nodes
       const walker = document.createTreeWalker(
@@ -243,6 +248,7 @@
         while ((match = regex.exec(text)) !== null) {
           const orderId = match[1].trim();
           if (!AMAZON_ORDER_ID_PATTERN.test(orderId)) {
+            rejectedCandidates.add(orderId);
             continue;
           }
           if (!orderLinkMap.has(orderId)) {
@@ -318,7 +324,10 @@
 
       if (this.logger) {
         this.logger.info(`📦 Extracted ${orderLinkMap.size} unique order links`);
-        
+        if (rejectedCandidates.size > 0) {
+          this.logger.warn(`⚠️ Rejected ${rejectedCandidates.size} candidate order ID(s) that failed validation: ${Array.from(rejectedCandidates).map(c => JSON.stringify(c)).join(', ')}`);
+        }
+
         // Log summary of dates found
         const ordersByDate = new Map();
         orderLinkMap.forEach((link, orderId) => {

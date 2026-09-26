@@ -26,10 +26,20 @@
     DATE_PATTERN_SLASH: /(\d{1,2}\/\d{1,2}\/\d{4})/,
     DATE_PATTERN_ISO: /(\d{4}-\d{2}-\d{2})/,
 
-    // Order ID Patterns
-    ORDER_ID_PATTERN: /Order\s*#?\s*([\d-]+)/i,
-    ORDER_ID_PATTERN_WITH_REFUND: /(?:Refund:)?\s*Order\s*#?\s*([\d-]+)/gi,
-    ORDER_ID_URL_PATTERN: /order[_-]?id[=_]?([\d-]+)|[/-]([\d-]{10,})[/-]/i,
+    // Order ID Patterns. The capture group is bounded to the exact order-ID
+    // shape (XXX-XXXXXXX-XXXXXXX, first group alphanumeric), for two reasons
+    // found 2026-09-26:
+    // 1. Digital/subscription orders (Audible, Kindle, etc.) use a
+    //    letter-prefixed first group, e.g. "D01-1234567-7654321" -- the old
+    //    digits-only [\d-]+ couldn't match those at all.
+    // 2. An *unbounded* capture ([A-Za-z\d-]+) over-captures whenever
+    //    textContent runs the ID into adjacent text with no separator (the
+    //    transactions page renders "Order #D01-..." followed by the bare ID,
+    //    so a link's textContent can be "Order #D01-1234567-7654321D01-...");
+    //    the over-long capture then fails validation and the order is lost.
+    ORDER_ID_PATTERN: /Order\s*#?\s*([A-Za-z0-9]{2,4}-\d{7}-\d{7})/i,
+    ORDER_ID_PATTERN_WITH_REFUND: /(?:Refund:)?\s*Order\s*#?\s*([A-Za-z0-9]{2,4}-\d{7}-\d{7})/gi,
+    ORDER_ID_URL_PATTERN: /order[_-]?id[=_]?([A-Za-z0-9]{2,4}-\d{7}-\d{7})|\/([A-Za-z0-9]{2,4}-\d{7}-\d{7})(?!\d)/i,
 
     // Price Patterns
     PRICE_PATTERN: /\$([\d,]+\.?\d*)/g,
@@ -129,6 +139,20 @@
         'a[href*="/dp/"]',
         'a[href*="/gp/product/"]',
         'a[href*="/gp/item-detail/"]'
+      ],
+      // Site chrome (nav bar, footer) that is never part of an order. The
+      // footer's "Amazon Payment Products" column links "Amazon Secured
+      // Card" / "Amazon Business Card" as /dp/ product pages, so without
+      // this they were scraped as items on every order (found 2026-09-26).
+      pageChrome: [
+        '#navFooter',
+        '.navLeftFooter',
+        '#navbar',
+        '#nav-main',
+        'header',
+        'footer',
+        '[role="navigation"]',
+        '[role="contentinfo"]'
       ],
       status: [
         '[class*="status"]',

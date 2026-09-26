@@ -12,6 +12,7 @@
       this.retryHandler = window.AmazonExporterRetryHandler;
       this.circuitBreaker = window.AmazonExporterCircuitBreaker;
       this.orderParser = new OrderDetailPageParser();
+      this.lastRunFailures = [];
       
       // Create circuit breaker for order fetching
       this.fetchCircuitBreaker = this.circuitBreaker ? new this.circuitBreaker({
@@ -81,12 +82,14 @@
           if (this.logger) {
             this.logger.error(`Error parsing order ${orderId}:`, parseResult.error);
           }
+          this.lastRunFailures.push({ orderId, url: orderUrl, reason: `parse error: ${parseResult.error?.message || parseResult.error}` });
           return null;
         }
       } catch (error) {
         if (this.logger) {
           this.logger.error(`Error fetching order ${orderId}:`, error);
         }
+        this.lastRunFailures.push({ orderId, url: orderUrl, reason: `fetch error: ${error?.message || error}` });
         return null;
       }
     }
@@ -99,6 +102,9 @@
      */
     async fetchMultipleOrders(orderLinks, onProgress = null) {
       const orderDetails = [];
+      // Per-order failure reasons for this run, read by content.js's
+      // end-of-run order accounting so a dropped order is never silent.
+      this.lastRunFailures = [];
       const delayMs = this.config.TEST_MODE ? 
         (this.config.TEST_MODE_DELAY_MS || 1000) : 
         (this.config.PRODUCTION_DELAY_MS || 1000);
@@ -290,6 +296,20 @@
       // containers, not something newly introduced here.
       const itemContainers = new Map();
 
+      // Links in the site nav/footer are never order items -- see
+      // constants.js's ORDER_DETAIL_PAGE.pageChrome comment.
+      const pageChromeSelector = (CONST.ORDER_DETAIL_PAGE?.pageChrome || [
+        '#navFooter', '.navLeftFooter', '#navbar', '#nav-main', 'header', 'footer',
+        '[role="navigation"]', '[role="contentinfo"]'
+      ]).join(', ');
+      function isInPageChrome(element) {
+        try {
+          return !!element.closest(pageChromeSelector);
+        } catch (e) {
+          return false;
+        }
+      }
+
       const priceLinePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
 
       // Amazon commonly renders a price as e.g.
@@ -338,7 +358,8 @@
       }
 
       for (const selector of itemSelectors) {
-        const containers = Array.from(doc.querySelectorAll(selector));
+        const containers = Array.from(doc.querySelectorAll(selector))
+          .filter(container => !isInPageChrome(container));
         if (containers.length > 0) {
           containers.forEach(container => {
             const containerText = container.textContent?.trim() || '';
@@ -348,6 +369,7 @@
               ['a[href*="/dp/"]', 'a[href*="/gp/product/"]'];
             const productLinks = container.querySelectorAll(productLinkSelectors.join(', '));
             productLinks.forEach(link => {
+              if (isInPageChrome(link)) return;
               const linkText = link.textContent?.trim();
               const minLength = CONST.MIN_TEXT_LENGTH || 5;
               const maxLength = CONST.MAX_TEXT_LENGTH || 200;
@@ -401,6 +423,7 @@
         const maxLength = CONST.MAX_TEXT_LENGTH || 200;
         const parentSearchDepth = CONST.PARENT_SEARCH_DEPTH || 5;
         allProductLinks.forEach(link => {
+          if (isInPageChrome(link)) return;
           const linkText = link.textContent?.trim();
           if (linkText && linkText.length > minTextLengthStrict && linkText.length < maxLength) {
             const isExcluded = excludedKeywords.some(keyword =>

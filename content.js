@@ -802,6 +802,50 @@
     return filteredLinks;
   }
 
+  /**
+   * Logs what happened to every order ID collected from the transactions
+   * page: excluded by the date filter, failed to fetch/parse, or exported.
+   * Added for B-039 (2026-09-26) -- orders were disappearing between stages
+   * without any trace in the final count, so every drop now gets a reason.
+   */
+  function logOrderAccounting(allOrderLinks, ordersToProcess, orderDetails, fetchFailures) {
+    const seen = new Map();
+    const duplicates = new Set();
+    allOrderLinks.forEach(link => {
+      if (seen.has(link.orderId)) duplicates.add(link.orderId);
+      else seen.set(link.orderId, link);
+    });
+    const toProcess = new Set(ordersToProcess.map(l => l.orderId));
+    const exported = new Set(orderDetails.map(d => d.orderNumber));
+    const failureReasons = new Map((fetchFailures || []).map(f => [f.orderId, f.reason]));
+
+    const rows = Array.from(seen.values()).map(link => {
+      let outcome;
+      if (exported.has(link.orderId)) outcome = 'exported';
+      else if (!toProcess.has(link.orderId)) outcome = 'excluded by date filter';
+      else outcome = failureReasons.get(link.orderId) || 'dropped after fetch (no reason recorded)';
+      return {
+        orderId: link.orderId,
+        transactionDate: link.transactionDate ? link.transactionDate.toLocaleDateString() : 'NO DATE',
+        outcome,
+        url: link.url
+      };
+    });
+
+    const counts = rows.reduce((acc, r) => {
+      const key = r.outcome.startsWith('exported') ? 'exported'
+        : r.outcome.startsWith('excluded') ? 'excluded by date' : 'failed';
+      acc[key] = (acc[key] || 0) + 1;
+      return acc;
+    }, {});
+    logger.info(`🧾 Order accounting: ${rows.length} unique order IDs collected -> ` +
+      `${counts.exported || 0} exported, ${counts['excluded by date'] || 0} excluded by date, ${counts.failed || 0} failed`);
+    if (duplicates.size > 0) {
+      logger.info(`🧾 ${duplicates.size} order ID(s) were collected more than once (seen on multiple pages): ${Array.from(duplicates).join(', ')}`);
+    }
+    console.table(rows);
+  }
+
   // ============================================================================
   // MAIN EXPORT FUNCTION (Pipeline Pattern)
   // ============================================================================
@@ -894,6 +938,7 @@
       logger.info(`📋 After filtering: ${ordersToProcess.length} orders to process`);
 
       if (ordersToProcess.length === 0) {
+        logOrderAccounting(allOrderLinks, ordersToProcess, [], []);
         let errorMessage = 'Could not find any orders to process. ';
         if (settings && settings.enabled) {
           errorMessage += `No orders found in the selected date range. Please check the date range or try exporting the current page only.`;
@@ -999,6 +1044,9 @@
           }
         }
       }
+
+      logOrderAccounting(allOrderLinks, ordersToProcess, orderDetails,
+        orderRepository ? orderRepository.lastRunFailures : []);
 
       if (orderDetails.length === 0) {
         let errorMessage = 'Could not fetch any order details. ';

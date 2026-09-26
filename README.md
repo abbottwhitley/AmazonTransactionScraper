@@ -96,7 +96,7 @@ Date,Payee,Amount,Category,Tags,Notes,Check_No
 
 Comprehensive format with all available order information. Includes the following columns:
 
-- **Order Number**: Amazon order ID (e.g., "113-2409867-7588258")
+- **Order Number**: Amazon order ID (e.g., "113-1234567-1234567")
 - **Transaction Date**: Date from the transactions page grouping (used for filtering)
 - **Order Placed Date**: Date when the order was placed (from order details page)
 - **Grand Total**: Grand total amount from the order details page (before refunds)
@@ -104,7 +104,7 @@ Comprehensive format with all available order information. Includes the followin
 - **Refund Amount**: Refund amount if applicable (empty if no refund)
 - **Items**: Semicolon-separated list of product names
 - **Category**: Automatically categorized purchase category (e.g., "Groceries", "Baby Supplies", "Shopping")
-- **Payment Method**: Payment method used (e.g., "Prime Visa ending in 9291")
+- **Payment Method**: Payment method used (e.g., "Prime Visa ending in 5678")
 - **Status**: Order status (e.g., "Delivered", "Shipped")
 - **Order URL**: Direct link to the order detail page
 
