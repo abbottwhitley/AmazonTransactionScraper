@@ -292,16 +292,45 @@
 
       const priceLinePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
 
+      // Amazon commonly renders a price as e.g.
+      // <span class="a-price"><span class="a-offscreen">$49.17</span>
+      // <span aria-hidden="true">...whole/fraction split for display...</span></span>
+      // -- the visible whole/fraction spans often don't concatenate into a
+      // clean "$49.17" text line (the decimal point is sometimes CSS
+      // content, not a text node), but .a-offscreen always holds the full,
+      // clean price as one string for screen readers. Try that first;
+      // fall back to line-scanning textContent for pages that don't use it.
+      const priceElementSelectors = CONST.ORDER_DETAIL_PAGE?.itemPrice || [
+        '.a-price .a-offscreen',
+        '.a-color-price',
+        '[class*="price"] .a-offscreen',
+      ];
+
       function findPriceInText(text) {
         const lines = (text || '').split('\n').map(l => l.trim());
         const priceLine = lines.find(l => priceLinePattern.test(l));
         return priceLine || null;
       }
 
+      function findPriceInContainer(container) {
+        for (const selector of priceElementSelectors) {
+          try {
+            const el = container.querySelector(selector);
+            const text = el?.textContent?.trim();
+            if (text && priceLinePattern.test(text)) {
+              return text;
+            }
+          } catch (e) {
+            // invalid selector for this DOM, try the next one
+          }
+        }
+        return findPriceInText(container.textContent);
+      }
+
       function findNearbyPrice(element, maxDepth) {
         let node = element;
         for (let i = 0; i < maxDepth && node; i++) {
-          const price = findPriceInText(node.textContent);
+          const price = findPriceInContainer(node);
           if (price) return price;
           node = node.parentElement;
         }
@@ -313,7 +342,7 @@
         if (containers.length > 0) {
           containers.forEach(container => {
             const containerText = container.textContent?.trim() || '';
-            const containerPrice = findPriceInText(containerText);
+            const containerPrice = findPriceInContainer(container);
 
             const productLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks ||
               ['a[href*="/dp/"]', 'a[href*="/gp/product/"]'];

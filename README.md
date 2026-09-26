@@ -113,6 +113,7 @@ Comprehensive format with all available order information. Includes the followin
 **Note:** 
 - Your CSV format preference is saved and will be remembered for future exports.
 - CSV files are automatically named using the date range of the export (e.g., `amazon_orders_detailed_2024-01-01_to_2024-01-31.csv`). For current page exports, today's date is used. For current month exports, the date range spans from the start of the month to today.
+- If you're logged in, the filename also includes the account's first name from the nav bar greeting (e.g., `amazon_orders_julian_detailed_2024-01-01_to_2024-01-31.csv`) -- useful for telling exports from different household members' accounts apart. Omitted if the greeting can't be found (never guessed).
 
 ### Date Filtering
 

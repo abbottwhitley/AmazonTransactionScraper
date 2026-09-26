@@ -92,6 +92,40 @@
     })();
   }
 
+  // Detects the logged-in Amazon account's first name from the nav bar
+  // greeting (e.g. "Hello, Julian"), so exports from different accounts
+  // (useful if more than one household member's Amazon account is
+  // exported) can be told apart by filename instead of relying on the
+  // browser's numeric "(1)" download-collision suffix. Never fabricates a
+  // name -- returns null (omitted from the filename) if not logged in or
+  // the greeting can't be found, rather than guessing.
+  function getAccountNameForFilename() {
+    const CONST = window.CONFIG || window.CONSTANTS || {};
+    const selectors = CONST.ACCOUNT_NAME_SELECTORS || [
+      '#nav-link-accountList-nav-line-1',
+      '#nav-link-accountList .nav-line-1',
+      '[data-nav-role="signin"] .nav-line-1'
+    ];
+    let el = null;
+    for (const selector of selectors) {
+      try {
+        el = document.querySelector(selector);
+        if (el) break;
+      } catch (e) {
+        // invalid selector, try the next one
+      }
+    }
+    const text = el?.textContent?.trim() || '';
+    const match = text.match(/Hello,\s*(.+)/i);
+    const name = (match ? match[1] : text).trim();
+    if (!name || /sign in/i.test(name)) {
+      return null;
+    }
+    const firstWord = name.split(/\s+/)[0];
+    const slug = firstWord.toLowerCase().replace(/[^a-z0-9]/g, '');
+    return slug || null;
+  }
+
   function escapeCSV(value) {
     return CSVExporter ? CSVExporter.escapeCSV(value) : (() => {
       if (value === null || value === undefined) return '';
@@ -1004,9 +1038,11 @@
       const formatSuffix = csvFormat === 'simplifi' ? 'simplifi' : 'detailed';
       // Generate date range string for filename
       const dateRangeStr = dateUtils ? dateUtils.getDateRangeStringForFilename(settings) : getDateString();
+      const accountSlug = getAccountNameForFilename();
+      const accountPart = accountSlug ? `${accountSlug}_` : '';
       const filename = CONFIG.TEST_MODE
-        ? `amazon_orders_TEST_${formatSuffix}_${dateRangeStr}.csv`
-        : `amazon_orders_${formatSuffix}_${dateRangeStr}.csv`;
+        ? `amazon_orders_${accountPart}TEST_${formatSuffix}_${dateRangeStr}.csv`
+        : `amazon_orders_${accountPart}${formatSuffix}_${dateRangeStr}.csv`;
 
       if (CSVExporter) {
         logger.info(`✅ Using CSVExporter to export CSV: ${filename} (format: ${csvFormat})`);

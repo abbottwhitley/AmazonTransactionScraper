@@ -108,6 +108,18 @@
     extractOrderLinks() {
       const CONST = this.config;
       const orderLinkMap = new Map();
+      // Real Amazon order IDs are XXX-XXXXXXX-XXXXXXX, but the first group
+      // isn't always 3 digits -- digital/subscription orders (Audible,
+      // Kindle, etc.) use a letter-prefixed group instead (e.g.
+      // "D01-4098072-8253053"). Regression found 2026-09-26: an earlier,
+      // narrower \d{3}-only version of this pattern silently rejected every
+      // one of those as "bogus", which is why exports were missing most
+      // digital-order months. Both extraction paths below guard against
+      // accepting a *malformed* orderId -- e.g. a stray "Order # -" match on
+      // an unrelated page element (a UI label, not a real order) that could
+      // otherwise match almost anything downstream -- without assuming the
+      // prefix is always 3 digits.
+      const AMAZON_ORDER_ID_PATTERN = CONST.AMAZON_ORDER_ID_PATTERN || /^[A-Za-z0-9]{2,4}-\d{7}-\d{7}$/;
       const dateHeaders = [];
       const datePattern = CONST.DATE_PATTERN ? new RegExp(CONST.DATE_PATTERN.source, 'i') : 
         /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i;
@@ -151,12 +163,19 @@
         });
       }
 
-      // Extract order links
+      // Extract order links. Confirmed real pattern (2026-09-26, from actual
+      // page HTML): Amazon's current order link is
+      // /gp/css/summary/edit.html?orderID=<id> -- kept here too as a
+      // defense-in-depth default even though core/constants.js's
+      // TRANSACTION_PAGE.orderLinks (which takes precedence) already has it,
+      // in case CONST.TRANSACTION_PAGE is ever unavailable for some reason.
       const orderDetailLinkSelectors = CONST.TRANSACTION_PAGE?.orderLinks || [
         'a[href*="/gp/your-account/order-details"]',
         'a[href*="/your-account/order-details"]',
         'a[href*="order-details"]',
-        'a[href*="/gp/css/summary/print"]'
+        'a[href*="/gp/css/summary/print"]',
+        'a[href*="orderID"]',
+        'a[href*="orderId"]'
       ];
 
       orderDetailLinkSelectors.forEach(selector => {
@@ -178,8 +197,15 @@
           
           if (orderMatch && href) {
             const orderId = orderMatch[1].trim();
+            // Real Amazon order IDs are always XXX-XXXXXXX-XXXXXXX. Without
+            // this, a stray "Order # -" style match elsewhere on the page
+            // (a UI label, not a real order) can produce a bogus orderId
+            // like "-" that then matches almost anything downstream.
+            if (!AMAZON_ORDER_ID_PATTERN.test(orderId)) {
+              return;
+            }
             const fullUrl = href.startsWith('http') ? href : new URL(href, window.location.origin).href;
-            
+
             if (!orderLinkMap.has(orderId)) {
               const transactionDate = this._findTransactionDateForElement(link, dateHeaders);
               if (this.logger) {
@@ -216,6 +242,9 @@
         const regex = new RegExp(orderPattern.source, orderPattern.flags);
         while ((match = regex.exec(text)) !== null) {
           const orderId = match[1].trim();
+          if (!AMAZON_ORDER_ID_PATTERN.test(orderId)) {
+            continue;
+          }
           if (!orderLinkMap.has(orderId)) {
             let searchElement = node.parentElement;
             let foundLink = null;

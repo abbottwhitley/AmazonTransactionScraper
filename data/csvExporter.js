@@ -184,7 +184,15 @@
 
       if (isOrderDetails) {
         // New order details format
-        const headers = ['Order Number', 'Transaction Date', 'Order Placed Date', 'Grand Total', 'Order Total', 'Refund Amount', 'Items', 'Item Prices', 'Category', 'Payment Method', 'Status', 'Order URL'];
+        // Deliberately no "Category" column here -- this format is meant to
+        // be raw transaction/order facts with no budget-taxonomy opinion
+        // baked in (categoryRules.js's classifier predates this repo's use
+        // as a data source for a budgeting app, doesn't match any specific
+        // app's real categories, and consumers with their own categorization
+        // logic -- checked against their own live category list -- should
+        // decide this, not the scraper). Still included in Simplifi format
+        // below, which has no other category info at all.
+        const headers = ['Order Number', 'Transaction Date', 'Order Placed Date', 'Grand Total', 'Order Total', 'Refund Amount', 'Items', 'Item Prices', 'Payment Method', 'Status', 'Order URL'];
         const rows = orders.map(t => [
           this.escapeCSV(t.orderNumber || ''),
           this.escapeCSV(t.transactionDate || ''), // Date from transactions page grouping
@@ -194,7 +202,6 @@
           this.escapeCSV(t.refundAmount || ''),
           this.escapeCSV(t.items || ''),
           this.escapeCSV(t.itemPrices || ''), // parallel to Items, one price (or blank) per item
-          this.escapeCSV(t.category || 'Shopping'),
           this.escapeCSV(t.paymentMethod || ''),
           this.escapeCSV(t.status || ''),
           this.escapeCSV(t.orderUrl || '')
