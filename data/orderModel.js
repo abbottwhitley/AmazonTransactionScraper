@@ -20,6 +20,7 @@
         refundAmount: '',
         paymentMethod: '',
         items: [],
+        itemPrices: [], // parallel to items -- one price string (or null) per item
         category: '', // Category based on item categorization
         status: ''
       };
@@ -63,7 +64,8 @@
       return {
         ...normalized,
         ...order,
-        items: Array.isArray(order.items) ? order.items : (order.items ? [order.items] : [])
+        items: Array.isArray(order.items) ? order.items : (order.items ? [order.items] : []),
+        itemPrices: Array.isArray(order.itemPrices) ? order.itemPrices : (order.itemPrices ? [order.itemPrices] : [])
       };
     }
   }

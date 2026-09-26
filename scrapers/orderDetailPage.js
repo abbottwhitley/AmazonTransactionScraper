@@ -279,13 +279,43 @@
         'div[class*="item-details"]'
       ];
 
-      const itemContainers = new Set();
-      
+      // name -> price string ('$X.XX') or null. A Map (not a Set) so each
+      // item name can carry its price alongside it -- needed so financeAgent
+      // can split a mixed-category order across real categories instead of
+      // leaving it unresolved. Known limitation: if a single container ever
+      // yields more than one item name (rare -- the productLinks path and
+      // the containerText-line fallback both feed the same container), they
+      // all get that container's one detected price; this was already an
+      // existing imprecision in how this method groups items into
+      // containers, not something newly introduced here.
+      const itemContainers = new Map();
+
+      const priceLinePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
+
+      function findPriceInText(text) {
+        const lines = (text || '').split('\n').map(l => l.trim());
+        const priceLine = lines.find(l => priceLinePattern.test(l));
+        return priceLine || null;
+      }
+
+      function findNearbyPrice(element, maxDepth) {
+        let node = element;
+        for (let i = 0; i < maxDepth && node; i++) {
+          const price = findPriceInText(node.textContent);
+          if (price) return price;
+          node = node.parentElement;
+        }
+        return null;
+      }
+
       for (const selector of itemSelectors) {
         const containers = Array.from(doc.querySelectorAll(selector));
         if (containers.length > 0) {
           containers.forEach(container => {
-            const productLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks || 
+            const containerText = container.textContent?.trim() || '';
+            const containerPrice = findPriceInText(containerText);
+
+            const productLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks ||
               ['a[href*="/dp/"]', 'a[href*="/gp/product/"]'];
             const productLinks = container.querySelectorAll(productLinkSelectors.join(', '));
             productLinks.forEach(link => {
@@ -293,22 +323,21 @@
               const minLength = CONST.MIN_TEXT_LENGTH || 5;
               const maxLength = CONST.MAX_TEXT_LENGTH || 200;
               if (linkText && linkText.length > minLength && linkText.length < maxLength) {
-                const isExcluded = excludedKeywords.some(keyword => 
+                const isExcluded = excludedKeywords.some(keyword =>
                   linkText.toLowerCase().includes(keyword.toLowerCase())
                 );
-                if (!isExcluded) {
-                  itemContainers.add(linkText);
+                if (!isExcluded && !itemContainers.has(linkText)) {
+                  itemContainers.set(linkText, containerPrice);
                 }
               }
             });
 
-            const containerText = container.textContent?.trim() || '';
             const minTextLengthStrict = CONST.MIN_TEXT_LENGTH_STRICT || 10;
             if (containerText.length > minTextLengthStrict) {
               const minLength = CONST.MIN_TEXT_LENGTH || 5;
               const lines = containerText.split('\n').map(l => l.trim()).filter(l => l.length > minLength);
               lines.forEach(line => {
-                const isExcluded = excludedKeywords.some(keyword => 
+                const isExcluded = excludedKeywords.some(keyword =>
                   line.toLowerCase().includes(keyword.toLowerCase())
                 );
                 const pricePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
@@ -316,13 +345,16 @@
                 const looksLikePrice = pricePattern.test(line) || quantityPattern.test(line);
                 const metadataPattern = CONST.METADATA_PATTERN || /^(Condition|Sold by|Shipped by|Qty|Quantity):/i;
                 const looksLikeMetadata = metadataPattern.test(line);
-                
+
                 const maxLength = CONST.MAX_TEXT_LENGTH || 200;
-                if (!isExcluded && !looksLikePrice && !looksLikeMetadata && 
+                if (!isExcluded && !looksLikePrice && !looksLikeMetadata &&
                     line.length > minTextLengthStrict && line.length < maxLength) {
                   const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
                   if (textPattern.test(line)) {
-                    itemContainers.add(line.substring(0, maxLength));
+                    const name = line.substring(0, maxLength);
+                    if (!itemContainers.has(name)) {
+                      itemContainers.set(name, containerPrice);
+                    }
                   }
                 }
               });
@@ -333,7 +365,7 @@
       }
 
       if (itemContainers.size === 0) {
-        const allProductLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks || 
+        const allProductLinkSelectors = CONST.ORDER_DETAIL_PAGE?.productLinks ||
           ['a[href*="/dp/"]', 'a[href*="/gp/product/"]', 'a[href*="/gp/item-detail/"]'];
         const allProductLinks = doc.querySelectorAll(allProductLinkSelectors.join(', '));
         const minTextLengthStrict = CONST.MIN_TEXT_LENGTH_STRICT || 10;
@@ -342,12 +374,12 @@
         allProductLinks.forEach(link => {
           const linkText = link.textContent?.trim();
           if (linkText && linkText.length > minTextLengthStrict && linkText.length < maxLength) {
-            const isExcluded = excludedKeywords.some(keyword => 
+            const isExcluded = excludedKeywords.some(keyword =>
               linkText.toLowerCase().includes(keyword.toLowerCase())
             );
             let parent = link.parentElement;
             let inSummary = false;
-            const summaryPatterns = CONST.SUMMARY_SECTION_PATTERNS || 
+            const summaryPatterns = CONST.SUMMARY_SECTION_PATTERNS ||
               [/Order\s+Summary/i, /Payment\s+Information/i, /Order\s+Total/i];
             for (let i = 0; i < parentSearchDepth && parent; i++) {
               const parentText = parent.textContent || '';
@@ -357,16 +389,20 @@
               }
               parent = parent.parentElement;
             }
-            
+
             const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
             if (!isExcluded && !inSummary && textPattern.test(linkText)) {
-              itemContainers.add(linkText.substring(0, maxLength));
+              const name = linkText.substring(0, maxLength);
+              if (!itemContainers.has(name)) {
+                itemContainers.set(name, findNearbyPrice(link.parentElement, parentSearchDepth));
+              }
             }
           }
         });
       }
 
-      orderDetails.items = Array.from(itemContainers);
+      orderDetails.items = Array.from(itemContainers.keys());
+      orderDetails.itemPrices = Array.from(itemContainers.values());
 
       // Extract payment method - try DOM selectors first for detailed extraction
       let foundPaymentMethod = '';
@@ -498,14 +534,16 @@
       
       // Categorize items before joining
       const itemsString = orderDetails.items.join('; ');
+      const itemPricesString = (orderDetails.itemPrices || []).map(p => p || '').join('; ');
       const CategoryRules = window.AmazonExporterCategoryRules;
       if (CategoryRules) {
         orderDetails.category = CategoryRules.categorizeOrder(orderDetails.items);
       } else {
         orderDetails.category = 'Shopping'; // Default fallback
       }
-      
+
       orderDetails.items = itemsString;
+      orderDetails.itemPrices = itemPricesString;
 
       return orderDetails;
     }
