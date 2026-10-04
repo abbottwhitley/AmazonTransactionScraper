@@ -123,41 +123,9 @@
       // Candidate IDs that failed validation, logged at the end -- a silent
       // rejection here is exactly how the 2026-09-26 regressions hid.
       const rejectedCandidates = new Set();
-      const dateHeaders = [];
-      const datePattern = CONST.DATE_PATTERN ? new RegExp(CONST.DATE_PATTERN.source, 'i') : 
-        /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i;
-      const dateSelectors = CONST.TRANSACTION_PAGE?.dateHeaders || [
-        '[class*="transaction-date"]',
-        '[data-pmts-component-id*="transaction-date"]',
-        '[class*="TransactionDate"]'
-      ];
-      
-      // Find all date headers on the page
       const findAllElements = CONST.findAllElementsWithFallbacks || 
         ((selectors) => Array.from(document.querySelectorAll(selectors.join(', '))));
-      
-      dateSelectors.forEach(selector => {
-        const dateElements = findAllElements([selector]);
-        dateElements.forEach(el => {
-          const dateText = el.textContent?.trim() || '';
-          const match = dateText.match(datePattern);
-          if (match) {
-            const parsedDate = this.dateUtils ? 
-              this.dateUtils.parseDateFromTransaction(match[0]) :
-              this._parseDateFromTransaction(match[0]);
-            if (parsedDate) {
-              dateHeaders.push({
-                element: el,
-                date: parsedDate.date,
-                position: this._getElementPosition(el)
-              });
-            }
-          }
-        });
-      });
-      
-      // Sort by DOM position
-      dateHeaders.sort((a, b) => a.position - b.position);
+      const dateHeaders = this._findDateHeaders();
       
       if (this.logger) {
         this.logger.info(`📅 Found ${dateHeaders.length} date headers on page:`);
@@ -351,6 +319,167 @@
       }
 
       return Array.from(orderLinkMap.values());
+    }
+
+    /**
+     * Extracts one ledger row per card transaction shown on the page.
+     *
+     * The transactions page lists card transactions, not orders: an order
+     * charged in two shipments is two rows, and a return is a third row
+     * ("Refund: Order #..."), each with its own date and signed amount.
+     * extractOrderLinks() collapses those into one entry per order (it only
+     * needs a URL to fetch details from), which loses the per-row amount --
+     * so a consumer could only compare a bank transaction against the
+     * order-level total, which matches neither a partial shipment's charge
+     * nor a refund. This keeps every row.
+     *
+     * Deliberately anchored on text ("Order #<id>" plus the nearest dollar
+     * amount) rather than on Amazon's class names, which have gone stale
+     * here before: for each "Order #<id>" occurrence, climb to the smallest
+     * ancestor that also contains a dollar amount. That ancestor is the row.
+     * If the climb reaches an element holding a second "Order #" first, the
+     * row has no amount of its own; it is still returned (amount null) so
+     * the caller can report it instead of losing it silently.
+     *
+     * @returns {Array} [{orderId, kind: 'charge'|'refund', amount: number|null,
+     *                    card: string, transactionDate: Date|null}]
+     *   card is "<name> ****<last 4>" for a real card, "Gift Card" or
+     *   "Points" for a row that never reaches a bank, '' if unrecognised.
+     *   amount is signed the way a bank shows it: negative for a charge,
+     *   positive for a refund.
+     */
+    extractLedgerRows() {
+      const CONST = this.config;
+      const AMAZON_ORDER_ID_PATTERN = CONST.AMAZON_ORDER_ID_PATTERN || /^[A-Za-z0-9]{2,4}-\d{7}-\d{7}$/;
+      const orderRefPattern = /Order\s*#\s*([A-Za-z0-9]{2,4}-\d{7}-\d{7})/gi;
+      const orderLabelPattern = /Order\s*#/gi;
+      // Optional sign (ASCII hyphen, Unicode minus, or plus), then $1,234.56
+      const moneyPattern = /([-\u2212+])?\s*\$\s*([\d,]+\.\d{2})/;
+      const cardPattern = /([A-Za-z][A-Za-z ]*?)\s*\*{4}\s*(\d{4})/;
+      const MAX_CLIMB = 10;
+
+      const dateHeaders = this._findDateHeaders();
+      const rows = [];
+      const seenContainers = new Set();
+
+      const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, null, false);
+      let node;
+      while ((node = walker.nextNode())) {
+        const text = node.textContent || '';
+        const regex = new RegExp(orderRefPattern.source, orderRefPattern.flags);
+        let match;
+        while ((match = regex.exec(text)) !== null) {
+          const orderId = match[1];
+          if (!AMAZON_ORDER_ID_PATTERN.test(orderId)) continue;
+
+          // Climb to the row: the smallest ancestor containing a dollar amount.
+          let container = null;
+          let overshoot = null;
+          let el = node.parentElement;
+          for (let i = 0; i < MAX_CLIMB && el && el !== document.body; i++) {
+            const elText = el.textContent || '';
+            if ((elText.match(orderLabelPattern) || []).length > 1) {
+              overshoot = el;
+              break;
+            }
+            if (moneyPattern.test(elText)) {
+              container = el;
+              break;
+            }
+            el = el.parentElement;
+          }
+
+          const rowElement = container || node.parentElement;
+          if (!rowElement || seenContainers.has(rowElement)) continue;
+          seenContainers.add(rowElement);
+
+          const rowText = (container ? container.textContent : text) || '';
+          const labelledRefund = /Refund/i.test(rowText);
+          let amount = null;
+          let explicitSign = '';
+          if (container) {
+            const money = rowText.match(moneyPattern);
+            const value = parseFloat(money[2].replace(/,/g, ''));
+            explicitSign = money[1] || '';
+            if (!isNaN(value)) {
+              if (explicitSign === '+') amount = value;
+              else if (explicitSign) amount = -value;
+              else amount = labelledRefund ? value : -value;
+            }
+          }
+          const kind = (labelledRefund || explicitSign === '+') ? 'refund' : 'charge';
+
+          let card = '';
+          const cardMatch = rowText.match(cardPattern);
+          if (cardMatch) card = `${cardMatch[1].trim()} ****${cardMatch[2]}`;
+          else if (/gift\s*card/i.test(rowText)) card = 'Gift Card';
+          else if (/points/i.test(rowText)) card = 'Points';
+
+          rows.push({
+            orderId,
+            kind,
+            amount,
+            card,
+            transactionDate: this._findTransactionDateForElement(rowElement, dateHeaders)
+          });
+
+          if (!container && this.logger) {
+            this.logger.warn(`⚠️ Ledger: no amount found for Order #${orderId}` +
+              (overshoot ? ' (reached another order\'s row first)' : ' (no dollar amount nearby)'));
+          }
+        }
+      }
+
+      if (this.logger) {
+        const refunds = rows.filter(r => r.kind === 'refund').length;
+        const noAmount = rows.filter(r => r.amount === null).length;
+        this.logger.info(`🧾 Ledger: ${rows.length} transaction row(s) on page ` +
+          `(${rows.length - refunds} charge, ${refunds} refund${noAmount ? `, ${noAmount} with no amount` : ''})`);
+      }
+
+      return rows;
+    }
+
+    /**
+     * Helper: Find the page's date headers, sorted by DOM position
+     * @private
+     */
+    _findDateHeaders() {
+      const CONST = this.config;
+      const dateHeaders = [];
+      const datePattern = CONST.DATE_PATTERN ? new RegExp(CONST.DATE_PATTERN.source, 'i') : 
+        /(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},\s+\d{4}/i;
+      const dateSelectors = CONST.TRANSACTION_PAGE?.dateHeaders || [
+        '[class*="transaction-date"]',
+        '[data-pmts-component-id*="transaction-date"]',
+        '[class*="TransactionDate"]'
+      ];
+      const findAllElements = CONST.findAllElementsWithFallbacks || 
+        ((selectors) => Array.from(document.querySelectorAll(selectors.join(', '))));
+      
+      dateSelectors.forEach(selector => {
+        const dateElements = findAllElements([selector]);
+        dateElements.forEach(el => {
+          const dateText = el.textContent?.trim() || '';
+          const match = dateText.match(datePattern);
+          if (match) {
+            const parsedDate = this.dateUtils ? 
+              this.dateUtils.parseDateFromTransaction(match[0]) :
+              this._parseDateFromTransaction(match[0]);
+            if (parsedDate) {
+              dateHeaders.push({
+                element: el,
+                date: parsedDate.date,
+                position: this._getElementPosition(el)
+              });
+            }
+          }
+        });
+      });
+      
+      // Sort by DOM position
+      dateHeaders.sort((a, b) => a.position - b.position);
+      return dateHeaders;
     }
 
     /**

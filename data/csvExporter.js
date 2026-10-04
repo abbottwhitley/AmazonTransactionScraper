@@ -192,10 +192,19 @@
         // logic -- checked against their own live category list -- should
         // decide this, not the scraper). Still included in Simplifi format
         // below, which has no other category info at all.
-        const headers = ['Order Number', 'Transaction Date', 'Order Placed Date', 'Grand Total', 'Order Total', 'Refund Amount', 'Items', 'Item Prices', 'Payment Method', 'Status', 'Order URL'];
+        // One row per card transaction when the ledger is available (see
+        // TransactionPageScraper.extractLedgerRows): "Transaction Amount" is
+        // that row's own signed amount (negative charge, positive refund),
+        // "Transaction Type" is charge/refund, "Card" is the card it hit.
+        // The order-level columns repeat on every row of the same order.
+        // All three are blank on a row with no ledger data.
+        const headers = ['Order Number', 'Transaction Date', 'Transaction Amount', 'Transaction Type', 'Card', 'Order Placed Date', 'Grand Total', 'Order Total', 'Refund Amount', 'Items', 'Item Prices', 'Payment Method', 'Status', 'Order URL'];
         const rows = orders.map(t => [
           this.escapeCSV(t.orderNumber || ''),
           this.escapeCSV(t.transactionDate || ''), // Date from transactions page grouping
+          this.escapeCSV(typeof t.transactionAmount === 'number' ? t.transactionAmount.toFixed(2) : ''),
+          this.escapeCSV(t.transactionType || ''),
+          this.escapeCSV(t.card || ''),
           this.escapeCSV(t.orderPlacedDate || ''), // Date from order details page
           this.escapeCSV(t.grandTotal || ''),
           this.escapeCSV(t.orderTotal || ''),

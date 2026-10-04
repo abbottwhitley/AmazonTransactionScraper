@@ -1,0 +1,57 @@
+<!doctype html>
+<!--
+  Hand-built stand-in for amazon.com/cpe/yourpayments/transactions, used by
+  tests/ledgerRows.test.mjs. It is NOT a capture of the real page: the
+  structure follows the row text the real page was observed to render
+  ("Mastercard ****1234-$15.70" / "Order #D01-..." / bare ID). The class
+  names are approximations. The second section deliberately uses a
+  different, flatter structure, because extractLedgerRows() is meant to
+  depend on the text, not on the markup.
+-->
+<html><body>
+<nav><a href="/gp/css/order-history">Returns &amp; Orders</a></nav>
+<div id="transactions">
+  <div class="apx-transaction-date-container"><span>September 20, 2026</span></div>
+  <div class="apx-transactions-line-item-component-container">
+    <div class="a-row"><div class="a-column a-span9"><span class="a-text-bold">Visa ****5678</span></div><div class="a-column a-span3"><span class="a-text-bold">+$21.00</span></div></div>
+    <div class="a-row"><span>Refund: </span><a class="a-link-normal" href="/gp/css/summary/edit.html?orderID=113-1111111-1111111">Order #113-1111111-1111111</a></div>
+    <div class="a-row"><span>AMZN Mktp US</span></div>
+  </div>
+  <div class="apx-transactions-line-item-component-container">
+    <div class="a-row"><div class="a-column a-span9"><span class="a-text-bold">Visa ****5678</span></div><div class="a-column a-span3"><span class="a-text-bold">-$1,234.56</span></div></div>
+    <div class="a-row"><a class="a-link-normal" href="/gp/css/summary/edit.html?orderID=113-2222222-2222222">Order #113-2222222-2222222</a></div>
+    <div class="a-row"><span>Amazon.com</span></div>
+  </div>
+
+  <div class="apx-transaction-date-container"><span>September 14, 2026</span></div>
+  <div class="apx-transactions-line-item-component-container">
+    <div class="a-row"><div class="a-column a-span9"><span class="a-text-bold">Visa ****5678</span></div><div class="a-column a-span3"><span class="a-text-bold">-$40.00</span></div></div>
+    <div class="a-row"><a class="a-link-normal" href="/gp/css/summary/edit.html?orderID=113-1111111-1111111">Order #113-1111111-1111111</a></div>
+    <div class="a-row"><span>AMZN Mktp US</span></div>
+  </div>
+  <div class="apx-transactions-line-item-component-container">
+    <div class="a-row"><div class="a-column a-span9"><span class="a-text-bold">Rewards Points:</span></div><div class="a-column a-span3"><span class="a-text-bold">+$10.00</span></div></div>
+    <div class="a-row"><span>Promotional credit</span></div>
+  </div>
+
+  <div class="apx-transaction-date-container"><span>September 2, 2026</span></div>
+  <div class="apx-transactions-line-item-component-container">
+    <div class="a-row"><span class="a-text-bold">Mastercard ****1234</span><span class="a-text-bold">-$15.70</span></div>
+    <div class="a-row"><a class="a-link-normal" href="/gp/css/summary/edit.html?orderID=D01-1234567-7654321">Order #D01-1234567-7654321</a><span>D01-1234567-7654321</span></div>
+  </div>
+  <div class="apx-transactions-line-item-component-container">
+    <div class="a-row"><span class="a-text-bold">Amazon Gift Card</span><span class="a-text-bold">+$8.39</span></div>
+    <div class="a-row"><span>Refund: Order #113-3333333-3333333</span></div>
+  </div>
+</div>
+
+<!-- Flatter variant: no per-row container class, unsigned amounts, a table. -->
+<table id="flat">
+  <tr class="date-row"><td colspan="2"><span class="transaction-date">August 30, 2026</span></td></tr>
+  <tr><td>Visa ****5678<br><a href="/gp/css/summary/edit.html?orderID=113-2222222-2222222">Order #113-2222222-2222222</a></td><td>$17.25</td></tr>
+  <tr><td>Visa ****5678<br>Refund: <a href="/gp/css/summary/edit.html?orderID=113-4444444-4444444">Order #113-4444444-4444444</a></td><td>$5.76</td></tr>
+  <tr><td><a href="/gp/css/summary/edit.html?orderID=113-5555555-5555555">Order #113-5555555-5555555</a></td></tr>
+</table>
+
+<footer><a href="/dp/B0SECURED">Amazon Secured Card</a> <span>Save $50.00 today</span></footer>
+</body></html>

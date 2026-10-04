@@ -1,0 +1,46 @@
+<!doctype html>
+<!--
+  Hand-built stand-in for an order details page of an order paid mostly with
+  rewards points, used by tests/orderDetailLabels.test.mjs. NOT a capture of
+  the real page: it reproduces the one property that mattered -- the order
+  summary's rows match an item selector ([class*="item-row"]) and include
+  labels beyond the usual subtotal/tax/total set.
+-->
+<html><body>
+<div id="orderDetails">
+  <div class="shipment">
+    <div class="a-fixed-left-grid"><a class="a-link-normal" href="/dp/B000000001">Purina ONE Chicken and Rice Formula Dry Dog Food - 31.1 lb. Bag</a>
+      <span class="a-price"><span class="a-offscreen">$51.43</span></span></div>
+    <div class="a-fixed-left-grid"><a class="a-link-normal" href="/dp/B000000002">Amazon.com Gift Card in a Greeting Card</a>
+      <span class="a-price"><span class="a-offscreen">$25.00</span></span></div>
+  </div>
+  <div id="od-subtotals">
+    <div class="a-row od-line-item-row"><span>
+Item(s) Subtotal:
+</span><span>
+$76.43
+</span></div>
+    <div class="a-row od-line-item-row"><span>
+Estimated tax to be collected:
+</span><span>
+$2.57
+</span></div>
+    <div class="a-row od-line-item-row"><span>
+Promotion Applied:
+</span><span>
+-$5.00
+</span></div>
+    <div class="a-row od-line-item-row"><span>
+Rewards Points:
+</span><span>
+-$73.72
+</span></div>
+    <div class="a-row od-line-item-row"><span>
+Grand Total:
+</span><span>
+$0.28
+</span></div>
+  </div>
+</div>
+<footer><a href="/dp/B0SECURED">Amazon Secured Card</a></footer>
+</body></html>

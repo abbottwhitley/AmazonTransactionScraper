@@ -94,19 +94,26 @@ Date,Payee,Amount,Category,Tags,Notes,Check_No
 
 ### 2. Detailed Format
 
-Comprehensive format with all available order information. Includes the following columns:
+Comprehensive format with all available order information. **One row per card transaction**, not per order: an order charged in two shipments is two rows, and a return is a further row. The order-level columns (totals, items, status) repeat on each row of the same order. Includes the following columns:
 
 - **Order Number**: Amazon order ID (e.g., "113-1234567-1234567")
 - **Transaction Date**: Date from the transactions page grouping (used for filtering)
+- **Transaction Amount**: This transaction's own signed amount, as the card shows it: negative for a charge, positive for a refund (e.g., "-15.70", "21.00")
+- **Transaction Type**: `charge` or `refund`
+- **Card**: The card the transaction hit (e.g., "Visa ****5678"), or "Gift Card" / "Points" for a row paid from (or refunded to) a gift-card balance or rewards points, which never reaches a bank
 - **Order Placed Date**: Date when the order was placed (from order details page)
 - **Grand Total**: Grand total amount from the order details page (before refunds)
 - **Order Total**: Net amount after refunds (grand total - refund amount)
 - **Refund Amount**: Refund amount if applicable (empty if no refund)
 - **Items**: Semicolon-separated list of product names
-- **Category**: Automatically categorized purchase category (e.g., "Groceries", "Baby Supplies", "Shopping")
+- **Item Prices**: Semicolon-separated prices, parallel to Items (blank where a price wasn't found)
 - **Payment Method**: Payment method used (e.g., "Prime Visa ending in 5678")
 - **Status**: Order status (e.g., "Delivered", "Shipped")
 - **Order URL**: Direct link to the order detail page
+
+Transaction Amount, Transaction Type and Card are blank on a row whose transaction couldn't be read from the page; the export then falls back to one row for that order. After each export the console prints a `🧾 Ledger accounting` table listing every exported row, so a missing amount is visible rather than silent.
+
+To check the row extraction without touching Amazon: `node tests/ledgerRows.test.mjs` (runs against `tests/fixtures/transactionsPage.html` in headless Chromium; needs `npm install` in `automation/`).
 
 **Note:** Categories are automatically assigned based on item names using keyword matching. Items that don't match specific categories default to "Shopping". Categories can be customized by editing `data/categoryRules.js`.
 

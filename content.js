@@ -44,6 +44,12 @@
   // Legacy compatibility
   let dateFilterSettings = null;
 
+  // One entry per card transaction row seen during the current export run
+  // (see TransactionPageScraper.extractLedgerRows). Reset by
+  // collectAllOrderLinks(), which gathers these page by page alongside the
+  // per-order links.
+  let collectedLedgerRows = [];
+
   // ============================================================================
   // UTILITY FUNCTIONS (kept for backward compatibility and direct access)
   // ============================================================================
@@ -567,6 +573,19 @@
     return [];
   }
 
+  function extractLedgerRows() {
+    const scraper = getScraperForPage ? getScraperForPage(window.location.href) : null;
+    if (scraper && typeof scraper.extractLedgerRows === 'function') {
+      try {
+        return scraper.extractLedgerRows();
+      } catch (error) {
+        // The ledger is additive: never let it break the order export.
+        logger.error('Ledger extraction failed, continuing without it:', error);
+      }
+    }
+    return [];
+  }
+
   async function clickNextPage() {
     if (pagination) {
       return await pagination.clickNextPage();
@@ -642,6 +661,7 @@
 
   async function collectAllOrderLinks() {
     const allOrderLinks = [];
+    collectedLedgerRows = [];
     let pageCount = 1; // Start at 1 since we're collecting from the current page
     const settings = appState ? appState.getDateFilterSettings() : 
                      (dateFilter ? dateFilter.getSettings() : dateFilterSettings);
@@ -678,6 +698,7 @@
         }
         
         allOrderLinks.push(...pageOrderLinks);
+        collectedLedgerRows.push(...extractLedgerRows());
         
         const dates = extractTransactionDates();
         const hasTargetDate = dates.some(d => isDateInTargetRange(d));
@@ -757,6 +778,7 @@
       }
       const pageOrderLinks = extractOrderLinks();
       allOrderLinks.push(...pageOrderLinks);
+      collectedLedgerRows.push(...extractLedgerRows());
       pageCount = 1;
     }
 
@@ -800,6 +822,102 @@
     }
 
     return filteredLinks;
+  }
+
+  /**
+   * Ledger rows whose transaction date is in the export's date range.
+   * Uses the same filter as the order links, so a row with no date is
+   * treated the same way an undated order is.
+   */
+  function filterLedgerRowsByDateRange(ledgerRows) {
+    if (dateFilter && dateFilter.isEnabled()) {
+      return dateFilter.filterOrdersByDateRange(ledgerRows);
+    }
+    if (dateFilterSettings && dateFilterSettings.enabled) {
+      return ledgerRows.filter(row => !row.transactionDate || isDateInTargetRange({
+        date: row.transactionDate,
+        year: row.transactionDate.getFullYear(),
+        month: row.transactionDate.getMonth() + 1
+      }));
+    }
+    return ledgerRows;
+  }
+
+  /**
+   * One order link per order ID (an order seen on two pages, or charged
+   * twice, was previously fetched and exported once per sighting), plus any
+   * order that has an in-range ledger row but whose link was dated out of
+   * range -- extractOrderLinks() dates an order by its first row on the
+   * page, which may be a later refund or shipment.
+   */
+  function dedupeAndCompleteOrders(ordersToProcess, allOrderLinks, ledgerRowsInRange) {
+    const byId = new Map();
+    ordersToProcess.forEach(link => {
+      if (!byId.has(link.orderId)) byId.set(link.orderId, link);
+    });
+    if (!CONFIG.TEST_MODE) {
+      const wanted = new Set(ledgerRowsInRange.map(row => row.orderId));
+      allOrderLinks.forEach(link => {
+        if (wanted.has(link.orderId) && !byId.has(link.orderId)) byId.set(link.orderId, link);
+      });
+    }
+    return Array.from(byId.values());
+  }
+
+  /**
+   * Expands fetched order details into one export row per in-range ledger
+   * row (card transaction), each carrying its own date, signed amount, type
+   * and card. An order with no ledger row keeps its single order-level row
+   * with those columns blank, so nothing is dropped. Returns orderDetails
+   * unchanged when no ledger rows were found at all.
+   */
+  function buildLedgerExportRows(orderDetails, ledgerRowsInRange) {
+    if (ledgerRowsInRange.length === 0) {
+      logger.warn('⚠️ Ledger: no transaction rows were extracted -- exporting one row per order, without Transaction Amount/Type/Card.');
+      return orderDetails;
+    }
+    const detailsById = new Map();
+    orderDetails.forEach(d => {
+      if (!detailsById.has(d.orderNumber)) detailsById.set(d.orderNumber, d);
+    });
+    const covered = new Set();
+    const rows = [];
+    ledgerRowsInRange.forEach(row => {
+      const details = detailsById.get(row.orderId);
+      if (!details) return;
+      covered.add(row.orderId);
+      rows.push({
+        ...details,
+        transactionDate: row.transactionDate ? row.transactionDate.toLocaleDateString() : details.transactionDate,
+        transactionAmount: row.amount,
+        transactionType: row.kind,
+        card: row.card
+      });
+    });
+    const uncovered = [];
+    detailsById.forEach((details, orderId) => {
+      if (!covered.has(orderId)) {
+        uncovered.push(orderId);
+        rows.push(details);
+      }
+    });
+
+    const refunds = rows.filter(r => r.transactionType === 'refund').length;
+    const noAmount = rows.filter(r => r.transactionType && typeof r.transactionAmount !== 'number').length;
+    logger.info(`🧾 Ledger accounting: ${rows.length} export row(s) for ${detailsById.size} order(s) -> ` +
+      `${rows.length - refunds - uncovered.length} charge, ${refunds} refund, ` +
+      `${uncovered.length} order(s) with no ledger row, ${noAmount} row(s) with no amount`);
+    if (uncovered.length > 0) {
+      logger.warn(`⚠️ Ledger: no transaction row found for: ${uncovered.join(', ')}`);
+    }
+    console.table(rows.map(r => ({
+      orderId: r.orderNumber,
+      transactionDate: r.transactionDate,
+      type: r.transactionType || '(no ledger row)',
+      amount: typeof r.transactionAmount === 'number' ? r.transactionAmount.toFixed(2) : '',
+      card: r.card || ''
+    })));
+    return rows;
   }
 
   /**
@@ -933,7 +1051,9 @@
       }
 
       // Step 3: Filter orders by date range and test mode
-      const ordersToProcess = filterOrdersByDateRange(allOrderLinks);
+      const ledgerRowsInRange = filterLedgerRowsByDateRange(collectedLedgerRows);
+      const ordersToProcess = dedupeAndCompleteOrders(
+        filterOrdersByDateRange(allOrderLinks), allOrderLinks, ledgerRowsInRange);
       
       logger.info(`📋 After filtering: ${ordersToProcess.length} orders to process`);
 
@@ -1094,7 +1214,12 @@
 
       if (CSVExporter) {
         logger.info(`✅ Using CSVExporter to export CSV: ${filename} (format: ${csvFormat})`);
-        CSVExporter.export(orderDetails, filename, csvFormat);
+        // Detailed format exports one row per card transaction; Simplifi
+        // format stays one row per order.
+        const exportRows = csvFormat === 'simplifi'
+          ? orderDetails
+          : buildLedgerExportRows(orderDetails, ledgerRowsInRange);
+        CSVExporter.export(exportRows, filename, csvFormat);
         logger.info(`✅ CSV export completed: ${filename}`);
       } else {
         logger.warn(`⚠️ CSVExporter not available, using fallback`);

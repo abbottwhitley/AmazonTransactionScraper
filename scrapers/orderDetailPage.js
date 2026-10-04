@@ -312,6 +312,18 @@
 
       const priceLinePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
 
+      // A line ending in a colon is a label from the order summary
+      // ("Rewards Points:", "Promotion Applied:", "Subscription saving:"),
+      // never a product name. The item selectors below also match the
+      // summary's rows, and EXCLUDED_KEYWORDS only knows the usual labels
+      // (subtotal, tax, total...). On an order paid with points or a
+      // promotion, the extra label was taken as the order's only "item",
+      // which also stopped the search before it reached the real product
+      // links (found 2026-10-04, 13 orders in one export). Matching the
+      // colon rather than listing more keywords avoids dropping real
+      // products whose names contain "Gift Card" or "Discount".
+      const summaryLabelPattern = CONST.SUMMARY_LABEL_PATTERN || /:\s*$/;
+
       // Amazon commonly renders a price as e.g.
       // <span class="a-price"><span class="a-offscreen">$49.17</span>
       // <span aria-hidden="true">...whole/fraction split for display...</span></span>
@@ -374,7 +386,7 @@
               const minLength = CONST.MIN_TEXT_LENGTH || 5;
               const maxLength = CONST.MAX_TEXT_LENGTH || 200;
               if (linkText && linkText.length > minLength && linkText.length < maxLength) {
-                const isExcluded = excludedKeywords.some(keyword =>
+                const isExcluded = summaryLabelPattern.test(linkText) || excludedKeywords.some(keyword =>
                   linkText.toLowerCase().includes(keyword.toLowerCase())
                 );
                 if (!isExcluded && !itemContainers.has(linkText)) {
@@ -388,7 +400,7 @@
               const minLength = CONST.MIN_TEXT_LENGTH || 5;
               const lines = containerText.split('\n').map(l => l.trim()).filter(l => l.length > minLength);
               lines.forEach(line => {
-                const isExcluded = excludedKeywords.some(keyword =>
+                const isExcluded = summaryLabelPattern.test(line) || excludedKeywords.some(keyword =>
                   line.toLowerCase().includes(keyword.toLowerCase())
                 );
                 const pricePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
@@ -426,7 +438,7 @@
           if (isInPageChrome(link)) return;
           const linkText = link.textContent?.trim();
           if (linkText && linkText.length > minTextLengthStrict && linkText.length < maxLength) {
-            const isExcluded = excludedKeywords.some(keyword =>
+            const isExcluded = summaryLabelPattern.test(linkText) || excludedKeywords.some(keyword =>
               linkText.toLowerCase().includes(keyword.toLowerCase())
             );
             let parent = link.parentElement;
