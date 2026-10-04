@@ -62,3 +62,7 @@ yarn-error.log*
 # Uncomment if you generate test reports
 # test-results/
 # test-reports/
+
+# Saved Amazon pages used to diagnose scraper bugs. They contain real names,
+# addresses and order details -- never commit them. Build fixtures by hand.
+htmlReferences/

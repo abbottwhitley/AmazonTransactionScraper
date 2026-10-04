@@ -14,6 +14,9 @@
     INFINITE_SCROLL_DELAY_MS: 1000,
     CONTEXT_WINDOW_SIZE: 50,
     MAX_TEXT_LENGTH: 200,
+    // Longest product-link text accepted as an item title. Amazon titles run
+    // to 200 characters; see orderDetailPage.js.
+    MAX_ITEM_TITLE_LENGTH: 500,
     MIN_TEXT_LENGTH: 5,
     MIN_TEXT_LENGTH_STRICT: 10,
     MAX_STATUS_TEXT_LENGTH: 100,

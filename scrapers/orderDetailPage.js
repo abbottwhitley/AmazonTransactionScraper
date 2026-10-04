@@ -312,6 +312,16 @@
 
       const priceLinePattern = CONST.PRICE_PATTERN_SIMPLE || /^\$[\d,]+\.?\d*$/;
 
+      // The text of a product link is the product's title. Amazon lets a
+      // title run to 200 characters and sellers routinely fill it, so the
+      // general MAX_TEXT_LENGTH guard ("under 200", meant to reject blobs of
+      // page text) dropped every item whose title was exactly at the limit
+      // -- and with it, on an order of only such items, the whole item list
+      // (found 2026-10-04: order with two 200-character titles exported
+      // with no items). A product link is already known to be a product, so
+      // it gets its own, more generous limit.
+      const maxItemTitleLength = CONST.MAX_ITEM_TITLE_LENGTH || 500;
+
       // A line ending in a colon is a label from the order summary
       // ("Rewards Points:", "Promotion Applied:", "Subscription saving:"),
       // never a product name. The item selectors below also match the
@@ -384,8 +394,7 @@
               if (isInPageChrome(link)) return;
               const linkText = link.textContent?.trim();
               const minLength = CONST.MIN_TEXT_LENGTH || 5;
-              const maxLength = CONST.MAX_TEXT_LENGTH || 200;
-              if (linkText && linkText.length > minLength && linkText.length < maxLength) {
+              if (linkText && linkText.length > minLength && linkText.length <= maxItemTitleLength) {
                 const isExcluded = summaryLabelPattern.test(linkText) || excludedKeywords.some(keyword =>
                   linkText.toLowerCase().includes(keyword.toLowerCase())
                 );
@@ -432,12 +441,11 @@
           ['a[href*="/dp/"]', 'a[href*="/gp/product/"]', 'a[href*="/gp/item-detail/"]'];
         const allProductLinks = doc.querySelectorAll(allProductLinkSelectors.join(', '));
         const minTextLengthStrict = CONST.MIN_TEXT_LENGTH_STRICT || 10;
-        const maxLength = CONST.MAX_TEXT_LENGTH || 200;
         const parentSearchDepth = CONST.PARENT_SEARCH_DEPTH || 5;
         allProductLinks.forEach(link => {
           if (isInPageChrome(link)) return;
           const linkText = link.textContent?.trim();
-          if (linkText && linkText.length > minTextLengthStrict && linkText.length < maxLength) {
+          if (linkText && linkText.length > minTextLengthStrict && linkText.length <= maxItemTitleLength) {
             const isExcluded = summaryLabelPattern.test(linkText) || excludedKeywords.some(keyword =>
               linkText.toLowerCase().includes(keyword.toLowerCase())
             );
@@ -456,9 +464,8 @@
 
             const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
             if (!isExcluded && !inSummary && textPattern.test(linkText)) {
-              const name = linkText.substring(0, maxLength);
-              if (!itemContainers.has(name)) {
-                itemContainers.set(name, findNearbyPrice(link.parentElement, parentSearchDepth));
+              if (!itemContainers.has(linkText)) {
+                itemContainers.set(linkText, findNearbyPrice(link.parentElement, parentSearchDepth));
               }
             }
           }
