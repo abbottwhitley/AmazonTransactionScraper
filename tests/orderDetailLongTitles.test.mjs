@@ -34,6 +34,8 @@ try {
   const details = await parse(html);
   assert.equal(details.items, `${TODDLER}; ${BULBS}`);
   assert.equal(details.itemPrices, '$8.99; $24.99');
+  // Each item's ASIN comes from its title link (2.3.0), parallel to items.
+  assert.equal(details.itemAsins, 'B000000001; B000000002');
   assert.equal(details.grandTotal, '$35.99');
   assert.equal(details.refundAmount, '$35.68');
 
@@ -41,6 +43,7 @@ try {
   const blob = 'Lorem ipsum dolor sit amet '.repeat(30).trim();
   const withBlob = await parse(html.replace(TODDLER, blob));
   assert.equal(withBlob.items, BULBS);
+  assert.equal(withBlob.itemAsins, 'B000000002');
   console.log('ok - 200-character titles are exported as items');
 } finally {
   await browser.close();

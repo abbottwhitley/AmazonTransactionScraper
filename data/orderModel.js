@@ -21,6 +21,7 @@
         paymentMethod: '',
         items: [],
         itemPrices: [], // parallel to items -- one price string (or null) per item
+        itemAsins: [], // parallel to items -- one ASIN (or null) per item
         category: '', // Category based on item categorization
         status: ''
       };
@@ -65,7 +66,8 @@
         ...normalized,
         ...order,
         items: Array.isArray(order.items) ? order.items : (order.items ? [order.items] : []),
-        itemPrices: Array.isArray(order.itemPrices) ? order.itemPrices : (order.itemPrices ? [order.itemPrices] : [])
+        itemPrices: Array.isArray(order.itemPrices) ? order.itemPrices : (order.itemPrices ? [order.itemPrices] : []),
+        itemAsins: Array.isArray(order.itemAsins) ? order.itemAsins : (order.itemAsins ? [order.itemAsins] : [])
       };
     }
   }

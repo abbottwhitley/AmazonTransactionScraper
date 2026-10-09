@@ -107,6 +107,7 @@ Comprehensive format with all available order information. **One row per card tr
 - **Refund Amount**: Refund amount if applicable (empty if no refund)
 - **Items**: Semicolon-separated list of product names
 - **Item Prices**: Semicolon-separated prices, parallel to Items (blank where a price wasn't found)
+- **Item ASINs**: Semicolon-separated Amazon product IDs (ASINs), parallel to Items (blank where an item had no product link). Added in 2.3.0; a title can change, the ASIN doesn't
 - **Payment Method**: Payment method used (e.g., "Prime Visa ending in 5678")
 - **Status**: Order status (e.g., "Delivered", "Shipped")
 - **Order URL**: Direct link to the order detail page

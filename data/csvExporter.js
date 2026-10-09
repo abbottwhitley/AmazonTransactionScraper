@@ -198,7 +198,9 @@
         // "Transaction Type" is charge/refund, "Card" is the card it hit.
         // The order-level columns repeat on every row of the same order.
         // All three are blank on a row with no ledger data.
-        const headers = ['Order Number', 'Transaction Date', 'Transaction Amount', 'Transaction Type', 'Card', 'Order Placed Date', 'Grand Total', 'Order Total', 'Refund Amount', 'Items', 'Item Prices', 'Payment Method', 'Status', 'Order URL'];
+        // "Item ASINs" is parallel to Items like "Item Prices": Amazon's
+        // product ID for each item, blank where the item had no product link.
+        const headers = ['Order Number', 'Transaction Date', 'Transaction Amount', 'Transaction Type', 'Card', 'Order Placed Date', 'Grand Total', 'Order Total', 'Refund Amount', 'Items', 'Item Prices', 'Item ASINs', 'Payment Method', 'Status', 'Order URL'];
         const rows = orders.map(t => [
           this.escapeCSV(t.orderNumber || ''),
           this.escapeCSV(t.transactionDate || ''), // Date from transactions page grouping
@@ -211,6 +213,7 @@
           this.escapeCSV(t.refundAmount || ''),
           this.escapeCSV(t.items || ''),
           this.escapeCSV(t.itemPrices || ''), // parallel to Items, one price (or blank) per item
+          this.escapeCSV(t.itemAsins || ''), // parallel to Items, one ASIN (or blank) per item
           this.escapeCSV(t.paymentMethod || ''),
           this.escapeCSV(t.status || ''),
           this.escapeCSV(t.orderUrl || '')
