@@ -296,6 +296,26 @@
       // containers, not something newly introduced here.
       const itemContainers = new Map();
 
+      // name -> ASIN, Amazon's product ID (10 letters and digits), read from
+      // the item's product link. A title can be reworded by the seller; the
+      // ASIN stays the same, so a consumer can recognise a product it has
+      // seen before. Blank when the item has no product link.
+      const itemAsins = new Map();
+      const asinPattern = CONST.ASIN_URL_PATTERN ||
+        /\/(?:dp|gp\/product|gp\/item-detail)\/([A-Z0-9]{10})(?![A-Z0-9])/i;
+      function asinFromLink(link) {
+        const match = asinPattern.exec(link?.getAttribute('href') || '');
+        return match ? match[1].toUpperCase() : null;
+      }
+      function addItem(name, price, asin) {
+        if (!itemContainers.has(name)) {
+          itemContainers.set(name, price);
+          itemAsins.set(name, asin);
+        } else if (asin && !itemAsins.get(name)) {
+          itemAsins.set(name, asin);
+        }
+      }
+
       // Links in the site nav/footer are never order items -- see
       // constants.js's ORDER_DETAIL_PAGE.pageChrome comment.
       const pageChromeSelector = (CONST.ORDER_DETAIL_PAGE?.pageChrome || [
@@ -398,8 +418,8 @@
                 const isExcluded = summaryLabelPattern.test(linkText) || excludedKeywords.some(keyword =>
                   linkText.toLowerCase().includes(keyword.toLowerCase())
                 );
-                if (!isExcluded && !itemContainers.has(linkText)) {
-                  itemContainers.set(linkText, containerPrice);
+                if (!isExcluded) {
+                  addItem(linkText, containerPrice, asinFromLink(link));
                 }
               }
             });
@@ -423,10 +443,8 @@
                     line.length > minTextLengthStrict && line.length < maxLength) {
                   const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
                   if (textPattern.test(line)) {
-                    const name = line.substring(0, maxLength);
-                    if (!itemContainers.has(name)) {
-                      itemContainers.set(name, containerPrice);
-                    }
+                    // A line of text has no link of its own, so no ASIN.
+                    addItem(line.substring(0, maxLength), containerPrice, null);
                   }
                 }
               });
@@ -464,9 +482,11 @@
 
             const textPattern = CONST.TEXT_PATTERN || /[a-zA-Z]{3,}/;
             if (!isExcluded && !inSummary && textPattern.test(linkText)) {
-              if (!itemContainers.has(linkText)) {
-                itemContainers.set(linkText, findNearbyPrice(link.parentElement, parentSearchDepth));
-              }
+              addItem(
+                linkText,
+                itemContainers.has(linkText) ? null : findNearbyPrice(link.parentElement, parentSearchDepth),
+                asinFromLink(link)
+              );
             }
           }
         });
@@ -474,6 +494,7 @@
 
       orderDetails.items = Array.from(itemContainers.keys());
       orderDetails.itemPrices = Array.from(itemContainers.values());
+      orderDetails.itemAsins = Array.from(itemContainers.keys()).map(name => itemAsins.get(name) || null);
 
       // Extract payment method - try DOM selectors first for detailed extraction
       let foundPaymentMethod = '';
@@ -606,6 +627,7 @@
       // Categorize items before joining
       const itemsString = orderDetails.items.join('; ');
       const itemPricesString = (orderDetails.itemPrices || []).map(p => p || '').join('; ');
+      const itemAsinsString = (orderDetails.itemAsins || []).map(a => a || '').join('; ');
       const CategoryRules = window.AmazonExporterCategoryRules;
       if (CategoryRules) {
         orderDetails.category = CategoryRules.categorizeOrder(orderDetails.items);
@@ -615,6 +637,7 @@
 
       orderDetails.items = itemsString;
       orderDetails.itemPrices = itemPricesString;
+      orderDetails.itemAsins = itemAsinsString;
 
       return orderDetails;
     }
